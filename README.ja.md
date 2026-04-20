@@ -105,6 +105,8 @@ claude   # このディレクトリでClaude Codeを起動
 
 > Nixを使う場合は、`nix develop`（または `direnv allow`）を実行し、[docs/SETUP.md#run-with-nix-flake](docs/SETUP.md#run-with-nix-flake) を参照してください。Nixシェルでは Playwright のブラウザが既に提供されるため、`npx playwright install chromium` は不要です。
 
+> 完全な分離が必要ですか？ career-ops を devcontainer 内で実行できます（Nix feature + Node 24.15.0）。OpenCode では [`opencode-devcontainers`](https://github.com/athal7/opencode-devcontainers) プラグイン、Claude Code では VS Code Dev Containers または [`openpackage`](https://github.com/enulus/openpackage) 経由で動作します。詳細は [docs/DEVCONTAINER.md](docs/DEVCONTAINER.md) を参照してください。
+
 > **このシステムはClaude自身がカスタマイズする前提で設計されています。** モード、アーキタイプ、スコアリング重み、交渉スクリプト -- すべてClaudeに依頼すれば変更してくれます。Claudeは自分が使うのと同じファイルを読むので、どこを編集すればよいか正確に把握しています。
 
 完全なセットアップガイドは [docs/SETUP.md](docs/SETUP.md) を参照してください。

@@ -41,3 +41,8 @@ bun.lock
 .claude/memory/
 career-dashboard
 package-lock.json
+
+# Devcontainer local overrides
+.devcontainer/*.local*
+.devcontainer/.env
+.direnv/

@@ -105,6 +105,8 @@ claude   # Abra o Claude Code neste diretório
 
 > Prefere Nix? Rode `nix develop` (ou `direnv allow`) e siga [docs/SETUP.md#run-with-nix-flake](docs/SETUP.md#run-with-nix-flake). No shell Nix, os browsers do Playwright já são fornecidos, então você pode pular `npx playwright install chromium`.
 
+> Quer isolamento total? Rode o career-ops dentro de um devcontainer (feature Nix + Node 24.15.0; funciona com OpenCode via [`opencode-devcontainers`](https://github.com/athal7/opencode-devcontainers) e com Claude Code via VS Code Dev Containers ou [`openpackage`](https://github.com/enulus/openpackage)). Veja [docs/DEVCONTAINER.md](docs/DEVCONTAINER.md).
+
 > **O sistema foi projetado para ser customizado pelo próprio Claude.** Modos, arquétipos, pesos de pontuação, scripts de negociação -- é só pedir para ele alterar. Ele lê os mesmos arquivos que usa, então sabe exatamente o que editar.
 
 Veja [docs/SETUP.md](docs/SETUP.md) para o guia completo de configuração.
