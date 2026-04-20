@@ -75,6 +75,8 @@ claude   # Открой Claude Code в директории проекта
 
 > Предпочитаете Nix? Выполните `nix develop` (или `direnv allow`) и следуйте [docs/SETUP.md#run-with-nix-flake](docs/SETUP.md#run-with-nix-flake). В Nix shell браузеры Playwright уже доступны, поэтому `npx playwright install chromium` можно пропустить.
 
+> Нужна полная изоляция? Запустите career-ops в devcontainer (feature Nix + Node 24.15.0; работает с OpenCode через [`opencode-devcontainers`](https://github.com/athal7/opencode-devcontainers) и с Claude Code через VS Code Dev Containers или [`openpackage`](https://github.com/enulus/openpackage)). См. [docs/DEVCONTAINER.md](docs/DEVCONTAINER.md).
+
 ## Использование
 
 Career-ops — одна slash-команда с множеством режимов:

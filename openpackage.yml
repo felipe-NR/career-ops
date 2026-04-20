@@ -1,0 +1,28 @@
+name: career-ops
+version: 1.5.0
+description: AI-powered job search pipeline (evaluate offers, generate CVs, scan portals, track applications)
+author: Santiago Fernández de Valderrama
+license: MIT
+homepage: https://github.com/santifer/career-ops
+repository: https://github.com/santifer/career-ops
+
+platforms:
+  claude: .claude/
+  opencode: .opencode/
+  gemini: .gemini/
+
+resources:
+  skills:
+    - .claude/skills/career-ops/
+  commands:
+    - .opencode/commands/*.md
+    - .gemini/commands/*.toml
+
+# Notes
+# - This manifest exposes the markdown commands and the Claude skill so
+#   consumers of `opkg install` get the same slash commands as a full clone.
+# - It does NOT package the Node scripts, templates, flake.nix, or the
+#   devcontainer. For isolated runtime see docs/DEVCONTAINER.md.
+# - `opkg migrate --from opencode --to claude` can port OpenCode-shaped
+#   configs (rules/commands/MCPs) into Claude Code; it does not transpile
+#   OpenCode npm plugins into Claude Code plugins.

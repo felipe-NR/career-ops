@@ -1,0 +1,33 @@
+{
+  "name": "career-ops",
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/nix:1": {
+      "multiUser": false,
+      "version": "latest",
+      "extraNixConfig": "experimental-features = nix-command flakes"
+    },
+    "ghcr.io/devcontainers-community/features/direnv:1": {},
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24.15.0"
+    }
+  },
+  "postCreateCommand": ".devcontainer/post-create.sh",
+  "remoteEnv": {
+    "PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS": "true"
+  },
+  "mounts": [
+    "source=career-ops-nix-store,target=/nix,type=volume",
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "mkhl.direnv",
+        "anthropic.claude-code"
+      ]
+    }
+  },
+  "forwardPorts": [],
+  "remoteUser": "vscode"
+}
