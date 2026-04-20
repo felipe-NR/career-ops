@@ -134,6 +134,8 @@ devcontainer up --workspace-folder .
 
 **`node --version` shows a different version inside vs. outside the Nix shell.** Expected. The devcontainer feature installs Node 24.15.0 at system level; `flake.nix` provides `nodejs-slim` (currently 24.14.0) which overrides `PATH` whenever `direnv` loads the flake. Both paths work — the pinned 24.15.0 is only relevant for commands that run before direnv activates.
 
+**`claude` / `claude-glm` aliases not found.** These are added by `post-create.sh` during container setup. If missing, run the alias block manually from `.devcontainer/post-create.sh`, or rebuild the container.
+
 ## Limitations
 
 - `opencode-devcontainers` is an OpenCode-specific npm plugin using `@opencode-ai/plugin`. `opkg migrate` ports configs (rules, commands, skills, MCPs) — it does not transpile OpenCode plugin runtimes into Claude Code plugins. For Claude Code, the supported path is the standard Dev Containers flow, which relies on the same `.devcontainer/devcontainer.json` in this repo.

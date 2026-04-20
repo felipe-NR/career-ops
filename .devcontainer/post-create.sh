@@ -24,3 +24,16 @@ direnv exec . npm install
 if ! direnv exec . node -e "require('playwright-core')" >/dev/null 2>&1; then
   direnv exec . npx playwright install chromium --with-deps || true
 fi
+
+# Install Claude Code CLI globally
+npm install -g @anthropic-ai/claude-code
+
+# Add claude aliases to both bash and zsh (container paths)
+for rcfile in ~/.bashrc ~/.zshrc; do
+  if ! grep -q 'alias claude=' "$rcfile" 2>/dev/null; then
+    echo "alias claude='claude --effort max'" >> "$rcfile"
+  fi
+  if ! grep -q 'alias claude-glm=' "$rcfile" 2>/dev/null; then
+    echo "alias claude-glm='claude --settings /home/vscode/.claude/settings-glm.json --effort max'" >> "$rcfile"
+  fi
+done
