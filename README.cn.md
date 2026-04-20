@@ -63,18 +63,18 @@ career-ops 具备代理式工作能力：Claude Code 会用 Playwright 浏览招
 
 ## 功能特性
 
-| 功能 | 说明 |
-|------|------|
-| **自动管道** | 粘贴一个 URL，即可获得完整评估 + PDF + 追踪记录 |
-| **6 个评估模块** | 职位总结、简历匹配、职级策略、薪酬调研、个性化建议、面试准备（STAR+R） |
-| **面试故事库** | 跨多次评估积累 STAR+Reflection 故事，沉淀出 5-10 个可回答任意行为面试题的主线故事 |
-| **谈薪脚本** | 薪资谈判框架、地域折扣反驳话术、竞品 offer 杠杆策略 |
-| **ATS PDF 生成** | 注入关键词的简历，采用 Space Grotesk + DM Sans 设计 |
-| **平台扫描器** | 预配置 45+ 家公司（Anthropic、OpenAI、ElevenLabs、Retool、n8n...），支持跨 Ashby、Greenhouse、Lever、Wellfound 的自定义查询 |
-| **批量处理** | 使用 `claude -p` worker 并行评估 |
-| **Dashboard TUI** | 在终端 UI 中浏览、筛选和排序你的求职管道 |
-| **人类在环** | AI 负责评估和建议，你负责决定和行动。系统绝不会自动提交申请，最终决定始终在你手上 |
-| **管道完整性** | 自动合并、去重、状态标准化和健康检查 |
+| 功能              | 说明                                                                                                                        |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **自动管道**      | 粘贴一个 URL，即可获得完整评估 + PDF + 追踪记录                                                                             |
+| **6 个评估模块**  | 职位总结、简历匹配、职级策略、薪酬调研、个性化建议、面试准备（STAR+R）                                                      |
+| **面试故事库**    | 跨多次评估积累 STAR+Reflection 故事，沉淀出 5-10 个可回答任意行为面试题的主线故事                                           |
+| **谈薪脚本**      | 薪资谈判框架、地域折扣反驳话术、竞品 offer 杠杆策略                                                                         |
+| **ATS PDF 生成**  | 注入关键词的简历，采用 Space Grotesk + DM Sans 设计                                                                         |
+| **平台扫描器**    | 预配置 45+ 家公司（Anthropic、OpenAI、ElevenLabs、Retool、n8n...），支持跨 Ashby、Greenhouse、Lever、Wellfound 的自定义查询 |
+| **批量处理**      | 使用 `claude -p` worker 并行评估                                                                                            |
+| **Dashboard TUI** | 在终端 UI 中浏览、筛选和排序你的求职管道                                                                                    |
+| **人类在环**      | AI 负责评估和建议，你负责决定和行动。系统绝不会自动提交申请，最终决定始终在你手上                                           |
+| **管道完整性**    | 自动合并、去重、状态标准化和健康检查                                                                                        |
 
 ## 快速开始
 
@@ -106,6 +106,8 @@ claude   # 在当前目录打开 Claude Code
 # 6. 开始使用
 # 粘贴一个职位 URL，或运行 /career-ops
 ```
+
+> 想使用 Nix？运行 `nix develop`（或 `direnv allow`），并参考 [docs/SETUP.md#run-with-nix-flake](docs/SETUP.md#run-with-nix-flake)。在 Nix shell 中，Playwright 浏览器已预置，因此可以跳过 `npx playwright install chromium`。
 
 > **这个系统本来就是设计给 Claude 直接定制的。** modes、职业原型、评分权重、谈判脚本，直接告诉 Claude 要改什么就行。Claude 读取的正是它自己会使用的那些文件，所以它知道该改哪里。
 

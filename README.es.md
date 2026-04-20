@@ -58,18 +58,18 @@ Construido por alguien que lo uso para evaluar 740+ ofertas, generar 100+ CVs pe
 
 ## Features
 
-| Feature | Descripcion |
-|---------|-------------|
-| **Auto-Pipeline** | Pega una URL, obtiene evaluacion + PDF + entrada en tracker |
-| **Evaluacion A-F** | Resumen del rol, match con CV, estrategia de nivel, research de comp, personalizacion, prep de entrevista (STAR+R) |
-| **Banco de historias** | Acumula historias STAR+Reflexion entre evaluaciones -- 5-10 historias maestras que responden cualquier pregunta behavioral |
-| **Scripts de negociacion** | Frameworks de negociacion salarial, pushback de descuentos geograficos, leverage de ofertas competidoras |
-| **PDFs ATS** | CVs con keywords inyectados, diseño Space Grotesk + DM Sans |
-| **Scanner de portales** | 45+ empresas pre-configuradas (Anthropic, OpenAI, ElevenLabs, Retool, n8n...) + queries en Ashby, Greenhouse, Lever, Wellfound |
-| **Batch** | Evaluacion en paralelo con workers `claude -p` |
-| **Dashboard TUI** | Terminal UI para navegar, filtrar y ordenar tu pipeline |
-| **Human-in-the-Loop** | La IA evalua y recomienda, tu decides y actuas. El sistema nunca envia una aplicacion -- tu siempre tienes la ultima palabra |
-| **Integridad de pipeline** | Merge automatico, dedup, normalizacion de estados, health checks |
+| Feature                    | Descripcion                                                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **Auto-Pipeline**          | Pega una URL, obtiene evaluacion + PDF + entrada en tracker                                                                    |
+| **Evaluacion A-F**         | Resumen del rol, match con CV, estrategia de nivel, research de comp, personalizacion, prep de entrevista (STAR+R)             |
+| **Banco de historias**     | Acumula historias STAR+Reflexion entre evaluaciones -- 5-10 historias maestras que responden cualquier pregunta behavioral     |
+| **Scripts de negociacion** | Frameworks de negociacion salarial, pushback de descuentos geograficos, leverage de ofertas competidoras                       |
+| **PDFs ATS**               | CVs con keywords inyectados, diseño Space Grotesk + DM Sans                                                                    |
+| **Scanner de portales**    | 45+ empresas pre-configuradas (Anthropic, OpenAI, ElevenLabs, Retool, n8n...) + queries en Ashby, Greenhouse, Lever, Wellfound |
+| **Batch**                  | Evaluacion en paralelo con workers `claude -p`                                                                                 |
+| **Dashboard TUI**          | Terminal UI para navegar, filtrar y ordenar tu pipeline                                                                        |
+| **Human-in-the-Loop**      | La IA evalua y recomienda, tu decides y actuas. El sistema nunca envia una aplicacion -- tu siempre tienes la ultima palabra   |
+| **Integridad de pipeline** | Merge automatico, dedup, normalizacion de estados, health checks                                                               |
 
 ## Inicio rapido
 
@@ -101,6 +101,8 @@ claude   # Abrir Claude Code en este directorio
 # 6. Usar
 # Pega una URL de oferta o ejecuta /career-ops
 ```
+
+> ¿Prefieres Nix? Ejecuta `nix develop` (o `direnv allow`) y sigue [docs/SETUP.md#run-with-nix-flake](docs/SETUP.md#run-with-nix-flake). En el shell de Nix, los navegadores de Playwright ya vienen incluidos, así que puedes omitir `npx playwright install chromium`.
 
 > **El sistema esta diseñado para que Claude lo personalice.** Modes, arquetipos, scoring, scripts de negociacion -- solo pidelo. Claude lee los mismos archivos que usa, asi que sabe exactamente que editar.
 
