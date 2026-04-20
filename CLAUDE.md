@@ -311,6 +311,7 @@ Default modes are in `modes/` (English). Additional language-specific modes are 
 - Output in `output/` (gitignored), Reports in `reports/`
 - JDs in `jds/` (referenced as `local:jds/{file}` in pipeline.md)
 - Batch in `batch/` (gitignored except scripts and prompt)
+- Optional devcontainer at `.devcontainer/devcontainer.json` (Nix feature + Node 24.15.0, reuses `flake.nix`). Works with OpenCode via `opencode-devcontainers`, with Claude Code via VS Code Dev Containers or `openpackage`. Guide: `docs/DEVCONTAINER.md`.
 - Report numbering: sequential 3-digit zero-padded, max existing + 1
 - **RULE: After each batch of evaluations, run `node merge-tracker.mjs`** to merge tracker additions and avoid duplications.
 - **RULE: NEVER create new entries in applications.md if company+role already exists.** Update the existing entry.

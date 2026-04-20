@@ -106,6 +106,8 @@ claude   # 이 디렉토리에서 Claude Code 실행
 
 > Nix를 선호하나요? `nix develop`(또는 `direnv allow`)를 실행하고 [docs/SETUP.md#run-with-nix-flake](docs/SETUP.md#run-with-nix-flake)를 따라주세요. Nix 셸에서는 Playwright 브라우저가 이미 제공되므로 `npx playwright install chromium`는 생략해도 됩니다.
 
+> 완전한 격리를 원하시나요? career-ops를 devcontainer에서 실행하세요 (Nix feature + Node 24.15.0). OpenCode는 [`opencode-devcontainers`](https://github.com/athal7/opencode-devcontainers) 플러그인으로, Claude Code는 VS Code Dev Containers 또는 [`openpackage`](https://github.com/enulus/openpackage)를 통해 작동합니다. 자세한 내용은 [docs/DEVCONTAINER.md](docs/DEVCONTAINER.md)를 참조하세요.
+
 > **이 시스템은 Claude가 직접 커스터마이즈하도록 설계되었습니다.** 모드, 아키타입, 스코어링 가중치, 협상 스크립트 -- 그냥 요청하세요. Claude가 사용하는 파일을 직접 읽기 때문에, 무엇을 수정해야 하는지 정확히 알고 있습니다.
 
 자세한 설정 가이드는 [docs/SETUP.md](docs/SETUP.md)를 참고하세요.

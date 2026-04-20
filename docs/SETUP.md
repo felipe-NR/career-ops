@@ -115,6 +115,12 @@ claude
 - In the Nix path, skip `npx playwright install chromium`.
 - If you use `direnv`, the shell is loaded automatically from `.envrc` when you enter the project directory.
 
+## Run in devcontainer (isolated)
+
+Prefer an isolated container over running career-ops on the host? There's a `.devcontainer/devcontainer.json` that layers Node 24.15.0, the Nix feature (reusing this repo's `flake.nix`), and direnv. It works with OpenCode (via the [`opencode-devcontainers`](https://github.com/athal7/opencode-devcontainers) plugin), Claude Code (via VS Code Dev Containers, optionally bootstrapped with [`openpackage`](https://github.com/enulus/openpackage)), and any CLI that can attach to a running container.
+
+Full guide: [docs/DEVCONTAINER.md](DEVCONTAINER.md).
+
 ## Available Commands
 
 | Action                | How                    |

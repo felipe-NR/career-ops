@@ -108,6 +108,8 @@ claude   # 在此目錄開啟 Claude Code
 
 > 想使用 Nix？請執行 `nix develop`（或 `direnv allow`），並參考 [docs/SETUP.md#run-with-nix-flake](docs/SETUP.md#run-with-nix-flake)。在 Nix shell 中，Playwright 瀏覽器已預先提供，因此可略過 `npx playwright install chromium`。
 
+> 需要完全隔離？在 devcontainer 中執行 career-ops（Nix feature + Node 24.15.0，支援 OpenCode 透過 [`opencode-devcontainers`](https://github.com/athal7/opencode-devcontainers)，支援 Claude Code 透過 VS Code Dev Containers 或 [`openpackage`](https://github.com/enulus/openpackage)）。詳情請見 [docs/DEVCONTAINER.md](docs/DEVCONTAINER.md)。
+
 > **這個系統設計上就是讓 Claude 來客製化的。** 模式、職位類型、評分權重、談判腳本 — 直接告訴 Claude 要修改什麼，它就會動手。Claude 讀取的是它自己使用的相同檔案，所以它確切知道要編輯哪裡。
 
 完整設定指南請參閱 [docs/SETUP.md](docs/SETUP.md)。
