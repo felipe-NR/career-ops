@@ -31,9 +31,9 @@ npm install -g @anthropic-ai/claude-code
 # Add claude aliases to both bash and zsh (container paths)
 for rcfile in ~/.bashrc ~/.zshrc; do
   if ! grep -q 'alias claude=' "$rcfile" 2>/dev/null; then
-    echo "alias claude='claude --effort max'" >> "$rcfile"
+    echo "alias claude='claude --effort max --dangerously-skip-permissions'" >> "$rcfile"
   fi
   if ! grep -q 'alias claude-glm=' "$rcfile" 2>/dev/null; then
-    echo "alias claude-glm='claude --settings /home/vscode/.claude/settings-glm.json --effort max'" >> "$rcfile"
+    echo "alias claude-glm='claude --settings /home/vscode/.claude/settings-glm.json --effort max --dangerously-skip-permissions'" >> "$rcfile"
   fi
 done
