@@ -3,7 +3,8 @@
 ## Prerequisites
 
 - [Claude Code](https://claude.ai/code) installed and configured
-- Node.js 18+ (for PDF generation and utility scripts)
+- Node.js 18+ (for PDF generation and utility scripts, unless you use the Nix dev shell)
+- (Optional) Nix with flakes enabled (for reproducible setup)
 - (Optional) Go 1.21+ (for the dashboard TUI)
 
 ## Quick Start (5 steps)
@@ -38,6 +39,7 @@ cp templates/portals.example.yml portals.yml
 ```
 
 Edit `portals.yml`:
+
 - Update `title_filter.positive` with keywords matching your target roles
 - Add companies you want to track in `tracked_companies`
 - Customize `search_queries` for your preferred job boards
@@ -52,17 +54,78 @@ claude
 
 Then paste a job offer URL or description. Career-ops will automatically evaluate it, generate a report, create a tailored PDF, and track it.
 
+## Run with Nix (Flake)
+
+Use this path if you want a reproducible environment managed by `flake.nix`.
+
+### Nix prerequisites
+
+- Nix with flakes enabled
+- (Optional) `direnv` + `nix-direnv` for automatic shell activation
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/santifer/career-ops.git
+cd career-ops
+```
+
+### 2. Enter the Nix development shell
+
+Option A (recommended, automatic with `direnv`):
+
+```bash
+direnv allow
+```
+
+Option B (manual):
+
+```bash
+nix develop
+```
+
+### 3. Install dependencies
+
+```bash
+npm install
+```
+
+### 4. Configure your files
+
+```bash
+cp config/profile.example.yml config/profile.yml
+cp modes/_profile.template.md modes/_profile.md
+cp templates/portals.example.yml portals.yml
+```
+
+Create `cv.md` in the project root with your CV in markdown.
+
+### 5. Verify setup and run
+
+```bash
+npm run doctor
+node cv-sync-check.mjs
+node verify-pipeline.mjs
+claude
+```
+
+### Nix notes
+
+- The Nix shell already provides Playwright browser binaries through `PLAYWRIGHT_BROWSERS_PATH`.
+- In the Nix path, skip `npx playwright install chromium`.
+- If you use `direnv`, the shell is loaded automatically from `.envrc` when you enter the project directory.
+
 ## Available Commands
 
-| Action | How |
-|--------|-----|
-| Evaluate an offer | Paste a URL or JD text |
-| Search for offers | `/career-ops scan` |
-| Process pending URLs | `/career-ops pipeline` |
-| Generate a PDF | `/career-ops pdf` |
-| Batch evaluate | `/career-ops batch` |
-| Check tracker status | `/career-ops tracker` |
-| Fill application form | `/career-ops apply` |
+| Action                | How                    |
+| --------------------- | ---------------------- |
+| Evaluate an offer     | Paste a URL or JD text |
+| Search for offers     | `/career-ops scan`     |
+| Process pending URLs  | `/career-ops pipeline` |
+| Generate a PDF        | `/career-ops pdf`      |
+| Batch evaluate        | `/career-ops batch`    |
+| Check tracker status  | `/career-ops tracker`  |
+| Fill application form | `/career-ops apply`    |
 
 ## Verify Setup
 
