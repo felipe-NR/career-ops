@@ -182,6 +182,21 @@
 | Read | cv.md, _profile.md, article-digest.md, cv-template.html |
 | Write | Временный HTML для PDF, data/applications.md, отчёты .md |
 | Edit | Обновление трекера |
+
+### Правила платформы (Не-Anthropic модели)
+
+**Если вы используете не-Anthropic модель (GLM, Gemini, DeepSeek, Qwen и т.д.):**
+- **НЕ использовать встроенный инструмент WebSearch.** Не-Anthropic модели имеют строгие ограничения на количество запросов WebSearch, которые career-ops быстро исчерпывает. Сохраняйте квоту.
+- Замените каждую инструкцию WebSearch в файлах режимов на WebFetch с конкретными известными URL:
+  - Данные о компенсации → WebFetch `https://www.levels.fyi/company/{company}/` или `https://www.glassdoor.com/Overview/company-{slug}.htm`
+  - Информация о компании → WebFetch страницы вакансий или страницы «О компании»
+  - Извлечение JD → WebFetch URL вакансии напрямую (поиск не нужен)
+  - Контакты LinkedIn → Спросить кандидата об именах, затем WebFetch URL профиля
+  - Новости об увольнениях → WebFetch известных новостных источников, если URL доступен, иначе пропустить
+- Цепочка fallback конвейера: **Playwright → WebFetch** (2 уровня, без уровня WebSearch)
+- Scan Уровень 3 (обнаружение через WebSearch) **недоступен**. Добавляйте компании вручную в `tracked_companies` в `portals.yml`.
+
+**Если вы используете Anthropic модель (Claude):** Используйте WebSearch, как задокументировано. Все файлы режимов работают как обычно.
 | Bash | `node generate-pdf.mjs` |
 
 ### Приоритет скорости

@@ -127,6 +127,21 @@ After detecting archetype, read `modes/_profile.md` for the user's specific fram
 | Canva MCP | Optional visual CV generation. Duplicate base design, edit text, export PDF. Requires `cv.canva_resume_design_id` in profile.yml. |
 | Bash | `node generate-pdf.mjs` |
 
+### Platform Rules (Non-Anthropic Models)
+
+**If running on a non-Anthropic model (GLM, Gemini, DeepSeek, Qwen, etc.):**
+- **DO NOT use the built-in WebSearch tool.** Non-Anthropic models have aggressive WebSearch rate limits that career-ops exhausts quickly. Preserve the quota.
+- Replace every WebSearch instruction in mode files with WebFetch using specific, known URLs:
+  - Comp data → WebFetch `https://www.levels.fyi/company/{company}/` or `https://www.glassdoor.com/Overview/company-{slug}.htm`
+  - Company info → WebFetch the company's careers page or About page
+  - JD extraction → WebFetch the JD URL directly (no search needed)
+  - LinkedIn contacts → Ask candidate for names, then WebFetch their profile URL
+  - Layoff news → WebFetch known news sources if URL is available, otherwise skip
+- Pipeline fallback chain becomes: **Playwright → WebFetch** (2 tiers, no WebSearch tier)
+- Scan Level 3 (WebSearch discovery) is **unavailable**. Users should add companies to `tracked_companies` in `portals.yml` manually.
+
+**If running on an Anthropic model (Claude):** Use WebSearch as documented. All mode files work as-is.
+
 ### Time-to-offer priority
 - Working demo + metrics > perfection
 - Apply sooner > learn more
