@@ -6,6 +6,18 @@
                 "mcp-server-fetch",
                 "--ignore-robots-txt"
             ]
+        },
+        "playwright": {
+            "command": "npx",
+            "args": [
+                "@playwright/mcp@latest",
+                "--headless",
+                "--no-sandbox",
+                "--executable-path",
+                "/nix/store/pic33kc7sgnn5qkhpg0ln8vbiwsvdx3h-playwright-chromium/chrome-linux64/chrome",
+                "--user-data-dir",
+                "/tmp/playwright-mcp"
+            ]
         }
     }
 }
