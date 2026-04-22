@@ -216,3 +216,18 @@ Em vagas e negociações brasileiras, existem termos e práticas que não aparec
 | Write | HTML temporário para PDF, reports .md, TSV em `batch/tracker-additions/` |
 | Edit | Ajustes de conteúdo (não usar para criar novos registros no tracker) |
 | Bash | `node generate-pdf.mjs`, `node merge-tracker.mjs` |
+
+### Regras de Plataforma (Modelos não-Anthropic)
+
+**Se estiver rodando em um modelo não-Anthropic (GLM, Gemini, DeepSeek, Qwen, etc.):**
+- **NÃO usar a ferramenta WebSearch integrada.** Modelos não-Anthropic têm limites de taxa rigorosos no WebSearch que o career-ops esgota rapidamente. Preserve a cota.
+- Substitua cada instrução WebSearch nos arquivos de modo por WebFetch com URLs específicas e conhecidas:
+  - Dados de remuneração → WebFetch `https://www.levels.fyi/company/{company}/` ou `https://www.glassdoor.com/Overview/company-{slug}.htm`
+  - Informações da empresa → WebFetch da página de carreiras ou página Sobre da empresa
+  - Extração de JD → WebFetch da URL do JD diretamente (sem busca necessária)
+  - Contatos no LinkedIn → Pedir nomes ao candidato, depois WebFetch da URL do perfil
+  - Notícias de demissões → WebFetch de fontes de notícias conhecidas se a URL estiver disponível, senão pular
+- A cadeia de fallback do pipeline passa a ser: **Playwright → WebFetch** (2 níveis, sem nível WebSearch)
+- Scan Nível 3 (descoberta via WebSearch) está **indisponível**. Adicione empresas manualmente em `tracked_companies` no `portals.yml`.
+
+**Se estiver rodando em um modelo Anthropic (Claude):** Use WebSearch conforme documentado. Todos os arquivos de modo funcionam normalmente.
