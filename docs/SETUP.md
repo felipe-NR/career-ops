@@ -5,7 +5,7 @@
 - [Claude Code](https://claude.ai/code) installed and configured
 - Node.js 18+ (for PDF generation and utility scripts, unless you use the Nix dev shell)
 - (Optional) Nix with flakes enabled (for reproducible setup)
-- (Optional) Go 1.21+ (for the dashboard TUI)
+- (Optional) Go 1.24+ (for the dashboard TUI — already provided if you use the Nix dev shell)
 
 ## Quick Start (5 steps)
 
@@ -140,10 +140,25 @@ node cv-sync-check.mjs      # Check configuration
 node verify-pipeline.mjs     # Check pipeline integrity
 ```
 
-## Build Dashboard (Optional)
+## Run TUI Dashboard (Optional)
+
+The `dashboard/` folder contains a Go TUI pipeline viewer. If you're on the Nix dev shell (`nix develop`), `go` is already on your PATH — skip any Go install step.
+
+### Build (first time)
 
 ```bash
 cd dashboard
 go build -o career-dashboard .
-./career-dashboard --path ..  # Opens TUI pipeline viewer
+```
+
+### Run
+
+```bash
+./dashboard/career-dashboard --path .
+```
+
+Or, if you're inside `dashboard/`:
+
+```bash
+./career-dashboard --path ..
 ```

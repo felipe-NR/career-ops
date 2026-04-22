@@ -174,11 +174,14 @@ career-ops 是一個具有多種模式的單一斜線指令：
 
 ## 儀表板 TUI
 
-內建的終端機儀表板讓你以視覺化方式瀏覽求職管道：
+內建的終端機儀表板讓你以視覺化方式瀏覽求職管道。建置一次，之後隨時執行 —— 使用 `nix develop` 時 `go` 已在 PATH 中。
 
 ```bash
+# 建置（首次）
 cd dashboard
 go build -o career-dashboard .
+
+# 執行
 ./career-dashboard --path ..
 ```
 
