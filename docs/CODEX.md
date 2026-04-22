@@ -13,7 +13,7 @@ Claude workflow.
 - Node.js 18+ (unless using the Nix dev shell)
 - Playwright Chromium installed for PDF generation and reliable job verification (not needed inside the Nix flake shell)
 - (Optional) Nix with flakes enabled for a reproducible dev shell
-- Go 1.21+ if you want the TUI dashboard
+- Go 1.24+ if you want the TUI dashboard (already provided in the Nix dev shell)
 
 ## Install
 
@@ -81,6 +81,7 @@ layer.
 ```bash
 npm run verify
 
-# optional dashboard build
-cd dashboard && go build ./...
+# optional dashboard build + run
+cd dashboard && go build -o career-dashboard .
+./career-dashboard --path ..
 ```

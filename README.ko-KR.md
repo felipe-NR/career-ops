@@ -171,11 +171,14 @@ Career-ops는 다양한 모드를 가진 하나의 슬래시 커맨드입니다:
 
 ## Dashboard TUI
 
-내장 터미널 대시보드로 파이프라인을 시각적으로 탐색할 수 있습니다:
+내장 터미널 대시보드로 파이프라인을 시각적으로 탐색할 수 있습니다. 한 번 빌드한 뒤 언제든 실행하세요 — `nix develop`을 사용하면 `go`가 이미 PATH에 있습니다.
 
 ```bash
+# 빌드 (최초 1회)
 cd dashboard
 go build -o career-dashboard .
+
+# 실행
 ./career-dashboard --path ..
 ```
 

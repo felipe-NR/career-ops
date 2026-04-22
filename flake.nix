@@ -17,6 +17,7 @@
 
           nodejs
           bun
+          go
 
           coreutils
 

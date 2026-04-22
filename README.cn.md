@@ -174,11 +174,14 @@ career-ops 是一个单一斜杠命令，带有多种模式：
 
 ## Dashboard TUI
 
-内置终端仪表盘可以让你更直观地浏览整个求职管道：
+内置终端仪表盘可以让你更直观地浏览整个求职管道。构建一次，之后随时运行 —— 使用 `nix develop` 时 `go` 已在 PATH 中。
 
 ```bash
+# 构建（首次）
 cd dashboard
 go build -o career-dashboard .
+
+# 运行
 ./career-dashboard --path ..
 ```
 

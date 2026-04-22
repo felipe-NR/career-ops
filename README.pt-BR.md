@@ -171,11 +171,14 @@ O scanner já vem com **45+ empresas** prontas para escanear e **19 consultas de
 
 ## Dashboard TUI
 
-O dashboard de terminal integrado permite navegar visualmente pelo seu pipeline:
+O dashboard de terminal integrado permite navegar visualmente pelo seu pipeline. Compile uma vez, depois execute quando quiser — `go` já está no seu PATH se você usar `nix develop`.
 
 ```bash
+# Compilar (primeira vez)
 cd dashboard
 go build -o career-dashboard .
+
+# Executar
 ./career-dashboard --path ..
 ```
 

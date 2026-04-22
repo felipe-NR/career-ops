@@ -222,11 +222,14 @@ The scanner comes with **45+ companies** ready to scan and **19 search queries**
 
 ## Dashboard TUI
 
-The built-in terminal dashboard lets you browse your pipeline visually:
+The built-in terminal dashboard lets you browse your pipeline visually. Build once, then run any time — `go` is already on your PATH if you use `nix develop`.
 
 ```bash
+# Build (first time)
 cd dashboard
 go build -o career-dashboard .
+
+# Run
 ./career-dashboard --path ..
 ```
 
