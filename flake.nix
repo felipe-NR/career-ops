@@ -18,6 +18,7 @@
           nodejs
           bun
           go
+          uv
 
           coreutils
 
