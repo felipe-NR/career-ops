@@ -4,6 +4,44 @@ Scans configured job portals, filters by title relevance, and adds new offers to
 
 > **Note (v1.5+):** The default scanner (`scan.mjs` / `npm run scan`) is **zero-token** and only queries Greenhouse, Ashby, and Lever public APIs directly. The Playwright/WebSearch levels described below are the **agent** flow (run by Claude/Codex), not what `scan.mjs` does. If a company lacks a Greenhouse/Ashby/Lever API, `scan.mjs` will skip it; for those cases, the agent must manually complete Level 1 (MCP fetch/Playwright) or Level 3 (WebSearch).
 
+## Arguments
+
+The `scan` mode accepts optional arguments passed after `scan`:
+
+| Invocation | Behavior |
+|-|-|
+| `/career-ops scan` | Scan all enabled companies + search queries (default) |
+| `/career-ops scan {company}` | Scan only companies matching `{company}` (partial, case-insensitive) in `tracked_companies`. Skips Level 3 WebSearch queries. |
+| `/career-ops scan --list` | List all tracked companies with their detected ATS platform |
+| `/career-ops scan --list {platform}` | List companies using a specific ATS (e.g., `gupy`, `greenhouse`, `ashby`, `lever`, `bamboohr`, `workday`, `teamtailor`, `workable`) |
+
+### ATS Detection for `--list`
+
+Infer ATS from `careers_url` and `api` fields using these patterns (check in order):
+
+| Platform keyword | URL signal |
+|-|-|
+| `greenhouse` | `greenhouse.io` in `careers_url` or `api` |
+| `ashby` | `ashbyhq.com` in `careers_url` or `api` |
+| `lever` | `lever.co` in `careers_url` or `api` |
+| `gupy` | `gupy.io` in `careers_url` |
+| `bamboohr` | `bamboohr.com` in `careers_url` or `api` |
+| `teamtailor` | `teamtailor.com` in `careers_url` or `api` |
+| `workday` | `myworkdayjobs.com` in `careers_url` |
+| `workable` | `workable.com` in `careers_url` |
+| `custom` | none of the above (own domain) |
+
+**`--list` output format:**
+```
+Tracked companies — ATS: {platform | all}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{name} | {ats} | {enabled/disabled} | {careers_url}
+...
+Total: N companies ({M} enabled, {K} disabled)
+```
+
+For `--list` with no platform filter, group output by ATS platform.
+
 ## Recommended Execution
 
 Run as a subagent to avoid consuming main context:
@@ -70,12 +108,17 @@ Levels are additive — run all, merge results, and deduplicate.
 
 ## Workflow
 
-1. **Read configuration**: `portals.yml`
-2. **Read history**: `data/scan-history.tsv` → already-seen URLs
-3. **Read dedup sources**: `data/applications.md` + `data/pipeline.md`
+1. **Parse arguments** (from the text after `scan`):
+   - If argument starts with `--list`: execute **List Mode** (see Arguments section) and stop — do not run the scan.
+   - If argument is a non-empty string (not starting with `--`): set `company_filter = argument` (partial, case-insensitive match against `name` in `tracked_companies`). Print `Scanning: {matched company names}` before starting.
+   - If no argument: `company_filter = null` (scan all).
 
-4. **Level 1 — MCP fetch scan** (parallel in batches of 5-10):
-   For each company in `tracked_companies` with `enabled: true` and `careers_url` defined:
+2. **Read configuration**: `portals.yml`
+3. **Read history**: `data/scan-history.tsv` → already-seen URLs
+4. **Read dedup sources**: `data/applications.md` + `data/pipeline.md`
+
+5. **Level 1 — MCP fetch scan** (parallel in batches of 5-10):
+   For each company in `tracked_companies` with `enabled: true` and `careers_url` defined, **filtered by `company_filter` if set**:
    a. `fetch` the `careers_url`
    b. Parse markdown output to extract all job listings
    c. If the page has filters/departments, navigate relevant sections
@@ -84,8 +127,8 @@ Levels are additive — run all, merge results, and deduplicate.
    f. Accumulate in candidate list
    g. If `careers_url` fails (404, redirect), try Playwright fallback, then `scan_query`, and note for URL update
 
-5. **Level 2 — ATS APIs / feeds** (parallel):
-   For each company in `tracked_companies` with `api:` defined and `enabled: true`:
+6. **Level 2 — ATS APIs / feeds** (parallel):
+   For each company in `tracked_companies` with `api:` defined and `enabled: true`, **filtered by `company_filter` if set**:
    a. `fetch` the API/feed URL
    b. If `api_provider` is defined, use its parser; if not, infer by domain (`boards-api.greenhouse.io`, `jobs.ashbyhq.com`, `api.lever.co`, `*.bamboohr.com`, `*.teamtailor.com`, `*.myworkdayjobs.com`)
    c. For **Ashby**, send POST with:
@@ -97,7 +140,7 @@ Levels are additive — run all, merge results, and deduplicate.
    f. For each job extract and normalize: `{title, url, company}`
    g. Accumulate in candidate list (dedup with Level 1)
 
-6. **Level 3 — WebSearch queries** (parallel if possible):
+7. **Level 3 — WebSearch queries** (parallel if possible, **skipped when `company_filter` is set**):
    For each query in `search_queries` with `enabled: true`:
    a. Execute WebSearch with the defined `query`
    b. From each result extract: `{title, url, company}`
@@ -106,17 +149,17 @@ Levels are additive — run all, merge results, and deduplicate.
       - **company**: after " @ " in the title, or extract from domain/path
    c. Accumulate in candidate list (dedup with Level 1+2)
 
-7. **Filter by title** using `title_filter` from `portals.yml`:
+8. **Filter by title** using `title_filter` from `portals.yml`:
    - At least 1 `positive` keyword must appear in the title (case-insensitive)
    - 0 `negative` keywords must appear
    - `seniority_boost` keywords add priority but are not required
 
-8. **Deduplicate** against 3 sources:
+9. **Deduplicate** against 3 sources:
    - `scan-history.tsv` → exact URL already seen
    - `applications.md` → company + normalized role already evaluated
    - `pipeline.md` → exact URL already pending or processed
 
-8.5. **Verify liveness of WebSearch results (Level 3)** — BEFORE adding to pipeline:
+9.5. **Verify liveness of WebSearch results (Level 3)** — BEFORE adding to pipeline:
 
    WebSearch results may be outdated (Google caches results for weeks or months). To avoid evaluating expired offers, verify each new URL from Level 3 with MCP fetch or Playwright. Levels 1 and 2 are inherently real-time and do not require this verification.
 
@@ -129,17 +172,17 @@ Levels are additive — run all, merge results, and deduplicate.
         - Page contains: "job no longer available" / "no longer open" / "position has been filled" / "this job has expired" / "page not found"
         - Only navbar and footer visible, no JD content (content < ~300 chars)
    c. If expired: record in `scan-history.tsv` with status `skipped_expired` and discard
-   d. If active: continue to step 9
+   d. If active: continue to step 10
 
    **Do not abort the entire scan if one URL fails.** If `fetch` or `browser_navigate` gives an error (timeout, 403, etc.), mark as `skipped_expired` and continue with the next one.
 
-9. **For each new verified offer that passes filters**:
+10. **For each new verified offer that passes filters**:
    a. Add to `pipeline.md` "Pendientes" section: `- [ ] {url} | {company} | {title}`
    b. Record in `scan-history.tsv`: `{url}\t{date}\t{query_name}\t{title}\t{company}\tadded`
 
-10. **Offers filtered by title**: record in `scan-history.tsv` with status `skipped_title`
-11. **Duplicate offers**: record with status `skipped_dup`
-12. **Expired offers (Level 3)**: record with status `skipped_expired`
+11. **Offers filtered by title**: record in `scan-history.tsv` with status `skipped_title`
+12. **Duplicate offers**: record with status `skipped_dup`
+13. **Expired offers (Level 3)**: record with status `skipped_expired`
 
 ## Title and Company Extraction from WebSearch Results
 

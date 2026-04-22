@@ -56,13 +56,23 @@ Available commands:
   /career-ops project   → Evaluate portfolio project idea
   /career-ops tracker   → Application status overview
   /career-ops apply     → Live application assistant (reads form + generates answers)
-  /career-ops scan      → Scan portals and discover new offers
+  /career-ops scan [--list [{platform}]] → Scan portals (optional: list companies by ATS)
+  /career-ops scan {company}           → Scan only companies matching name
   /career-ops batch     → Batch processing with parallel workers
   /career-ops patterns  → Analyze rejection patterns and improve targeting
   /career-ops followup  → Follow-up cadence tracker: flag overdue, generate drafts
 
 Inbox: add URLs to data/pipeline.md → /career-ops pipeline
 Or paste a JD directly to run the full pipeline.
+
+Scan options:
+  /career-ops scan                    → Scan all enabled companies
+  /career-ops scan --list             → List all companies with ATS platform
+  /career-ops scan --list gupy        → List only Gupy companies
+  /career-ops scan --list greenhouse  → List only Greenhouse companies
+  /career-ops scan --list ashby       → List only Ashby companies
+  /career-ops scan --list lever       → List only Lever companies
+  /career-ops scan Globo              → Scan only companies matching "Globo"
 ```
 
 ---
