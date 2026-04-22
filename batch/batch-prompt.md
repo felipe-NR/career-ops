@@ -44,7 +44,7 @@ Eres un worker de evaluación de ofertas de empleo for the candidate (read name 
 ### Paso 1 — Obtener JD
 
 1. Lee el archivo JD en `{{JD_FILE}}`
-2. Si el archivo está vacío o no existe, intenta obtener el JD desde `{{URL}}` con WebFetch
+2. Si el archivo está vacío o no existe, intenta obtener el JD desde `{{URL}}` con MCP fetch (`fetch`)
 3. Si ambos fallan, reporta error y termina
 
 ### Paso 2 — Evaluación A-G

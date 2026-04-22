@@ -281,12 +281,13 @@ Default modes are in `modes/` (English). Additional language-specific modes are 
 
 ## Offer Verification -- MANDATORY
 
-**NEVER trust WebFetch to verify if an offer is still active.** ALWAYS use Playwright:
-1. `browser_navigate` to the URL
-2. `browser_snapshot` to read content
-3. Only footer/navbar without JD = closed. Title + description + Apply = active.
+**ALWAYS use MCP fetch (`fetch` tool) to fetch any URL.** This is the default web fetch tool across all environments and models:
+1. `fetch` the URL to retrieve page content as markdown
+2. Only footer/navbar without JD = closed. Title + description + Apply = active.
 
-**Exception for batch workers (`claude -p`):** Playwright is not available in headless pipe mode. Use WebFetch as fallback and mark the report header with `**Verification:** unconfirmed (batch mode)`. The user can verify manually later.
+**Fallback chain:** MCP fetch → Playwright (`browser_navigate` + `browser_snapshot`) if the page requires JavaScript rendering (SPAs).
+
+**Exception for batch workers (`claude -p`):** If neither MCP fetch nor Playwright is available, mark the report header with `**Verification:** unconfirmed (batch mode)`. The user can verify manually later.
 
 ---
 
