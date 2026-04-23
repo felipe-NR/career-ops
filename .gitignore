@@ -3,6 +3,8 @@ cv.md
 data/applications.md
 data/pipeline.md
 data/scan-history.tsv
+interview-prep/story-bank.md
+!interview-prep/story-bank.template.md
 reports/*.md
 !reports/.gitkeep
 output/*

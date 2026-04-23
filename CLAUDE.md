@@ -129,6 +129,8 @@ When using the [Gemini CLI](https://github.com/google-gemini/gemini-cli), the fo
 
 If `modes/_profile.md` is missing, copy from `modes/_profile.template.md` silently. This is the user's customization file — it will never be overwritten by updates.
 
+If `interview-prep/story-bank.md` is missing, copy from `interview-prep/story-bank.template.md` silently. This file accumulates personal STAR+R stories over time and should not be tracked in git.
+
 **If ANY of these is missing, enter onboarding mode.** Do NOT proceed with evaluations, scans, or any other mode until the basics are in place. Guide the user step by step:
 
 #### Step 1: CV (required)
