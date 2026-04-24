@@ -134,7 +134,11 @@ devcontainer up --workspace-folder .
 
 **`node --version` shows a different version inside vs. outside the Nix shell.** Expected. The devcontainer feature installs Node 24.15.0 at system level; `flake.nix` provides `nodejs-slim` (currently 24.14.0) which overrides `PATH` whenever `direnv` loads the flake. Both paths work — the pinned 24.15.0 is only relevant for commands that run before direnv activates.
 
-**`claude` / `claude-glm` aliases not found.** These are added by `post-create.sh` during container setup. If missing, run the alias block manually from `.devcontainer/post-create.sh`, or rebuild the container.
+**`claude` / `claude-glm` aliases not found.** These are added by `post-create.sh` during container setup. If missing, rerun `.devcontainer/post-create.sh` or rebuild the container.
+
+**`claude-glm` fails with missing auth token or settings file.** The devcontainer no longer bind-mounts `~/.claude`. During setup, `post-create.sh` calls `.devcontainer/render-claude-settings.mjs`, which renders `/home/vscode/.claude/settings-glm.json` from `.devcontainer/claude-settings-glm.template.json` using values from `.env` via `direnv`. Set `CLAUDE_GLM_AUTH_TOKEN` in `.env`, then rerun `.devcontainer/post-create.sh`.
+
+**`claude` shows `Invalid bearer token` even after `/login`.** Check `.env` and remove `ANTHROPIC_AUTH_TOKEN` from the shell environment. Keep GLM credentials under `CLAUDE_GLM_AUTH_TOKEN` so the standard `claude` alias stays on login-based auth while `claude-glm` keeps using `/home/vscode/.claude/settings-glm.json`.
 
 ## Limitations
 
