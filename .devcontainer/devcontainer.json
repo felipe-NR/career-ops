@@ -17,14 +17,12 @@
     "PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS": "true"
   },
   "mounts": [
-    "source=career-ops-nix-store,target=/nix,type=volume",
-    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind"
+    "source=career-ops-nix-store,target=/nix,type=volume"
   ],
   "customizations": {
     "vscode": {
       "extensions": [
-        "mkhl.direnv",
-        "anthropic.claude-code"
+        "mkhl.direnv"
       ]
     }
   },

@@ -28,8 +28,27 @@ fi
 # Install Claude Code CLI globally
 npm install -g @anthropic-ai/claude-code
 
+# Render claude-glm settings from a versioned template + project .env.
+mkdir -p /home/vscode/.claude
+CLAUDE_SETTINGS_TEMPLATE="$WORKSPACE/.devcontainer/claude-settings-glm.template.json"
+CLAUDE_SETTINGS_OUTPUT="/home/vscode/.claude/settings-glm.json"
+CLAUDE_SETTINGS_RENDERER="$WORKSPACE/.devcontainer/render-claude-settings.mjs"
+
+if [ -f "$CLAUDE_SETTINGS_TEMPLATE" ] && [ -f "$CLAUDE_SETTINGS_RENDERER" ]; then
+  direnv exec . node "$CLAUDE_SETTINGS_RENDERER" \
+    --template "$CLAUDE_SETTINGS_TEMPLATE" \
+    --output "$CLAUDE_SETTINGS_OUTPUT"
+
+  if [ -f "$CLAUDE_SETTINGS_OUTPUT" ]; then
+    chmod 600 "$CLAUDE_SETTINGS_OUTPUT"
+  fi
+fi
+
 # Add claude aliases to both bash and zsh (container paths)
-for rcfile in ~/.bashrc ~/.zshrc; do
+for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
+  if [ ! -f "$rcfile" ]; then
+    continue
+  fi
   if ! grep -q 'alias claude=' "$rcfile" 2>/dev/null; then
     echo "alias claude='claude --effort max --dangerously-skip-permissions'" >> "$rcfile"
   fi
