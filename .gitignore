@@ -41,6 +41,7 @@ bun.lock
 # Claude Code local
 .claude/settings.local.json
 .claude/memory/
+.playwright-mcp/
 career-dashboard
 package-lock.json
 
