@@ -196,26 +196,10 @@ Dans les offres et negociations francophones, certains termes n'existent pas sur
 
 | Outil | Usage |
 |-------|-------|
-| MCP fetch (`fetch`) | **OUTIL PAR DEFAUT** pour le web. Utiliser pour TOUS les acces URL — extraction JD, pages entreprise, donnees de remuneration, verification. Convertit HTML en markdown. Disponible dans tous les environnements. |
-| WebSearch | Recherche remuneration, tendances, culture d'entreprise, contacts LinkedIn — uniquement quand il faut CHERCHER (pas d'URL connue). |
-| Playwright | Fallback pour les SPAs necessitant JavaScript que MCP fetch ne peut pas rendre. Aussi pour la generation PDF. **CRITIQUE : JAMAIS 2+ agents en parallele avec Playwright -- ils partagent la meme instance navigateur** |
+| WebSearch | Recherche remuneration, tendances, culture d'entreprise, contacts LinkedIn, fallback offres |
+| WebFetch | Fallback pour extraire les offres depuis des pages statiques |
+| Playwright | Verifier si les offres sont actives (browser_navigate + browser_snapshot), extraire les offres depuis des SPAs. **CRITIQUE : JAMAIS 2+ agents en parallele avec Playwright -- ils partagent la meme instance navigateur** |
 | Read | cv.md, article-digest.md, cv-template.html |
 | Write | HTML temporaire pour PDF, applications.md, reports .md |
 | Edit | Mettre a jour le tracker |
 | Bash | `node generate-pdf.mjs` |
-
-### Regles de plateforme (Modeles non-Anthropic)
-
-**Si vous utilisez un modele non-Anthropic (GLM, Gemini, DeepSeek, Qwen, etc.) :**
-- **MCP fetch est l'outil principal.** Utiliser `fetch` pour tous les acces URL — sans limites de debit et fonctionne de maniere identique sur tous les modeles.
-- **NE PAS utiliser l'outil WebSearch integre.** Les modeles non-Anthropic ont des limites de debit WebSearch strictes que career-ops epuise rapidement. Preserver le quota.
-- Remplacer chaque instruction WebSearch dans les fichiers de mode par MCP fetch avec des URL specifiques et connues :
-  - Donnees de remuneration → `fetch` `https://www.levels.fyi/company/{company}/` ou `https://www.glassdoor.com/Overview/company-{slug}.htm`
-  - Informations entreprise → `fetch` de la page carriere ou A propos de l'entreprise
-  - Extraction JD → `fetch` de l'URL du JD directement (pas de recherche necessaire)
-  - Contacts LinkedIn → Demander au candidat les noms, puis `fetch` de l'URL du profil
-  - Nouvelles de licenciement → `fetch` de sources d'information connues si l'URL est disponible, sinon ignorer
-- La chaine de secours du pipeline devient : **MCP fetch → Playwright** (2 niveaux, pas de niveau WebSearch)
-- Le Scan Niveau 3 (decouverte WebSearch) est **indisponible**. Ajouter les entreprises manuellement dans `tracked_companies` dans `portals.yml`.
-
-**Si vous utilisez un modele Anthropic (Claude) :** MCP fetch reste l'outil par defaut pour l'acces URL. Utiliser WebSearch uniquement pour la decouverte large quand aucune URL specifique n'est connue.

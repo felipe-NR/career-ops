@@ -7,11 +7,11 @@ Processa URLs de vagas acumuladas em `data/pipeline.md`. O candidato adiciona UR
 1. **Ler** `data/pipeline.md` → buscar itens `- [ ]` na seção "Pendentes"
 2. **Para cada URL pendente**:
    a. Calcular próximo `REPORT_NUM` sequencial (ler `reports/`, pegar o número mais alto + 1)
-   b. **Extrair JD** usando MCP fetch (`fetch`) → Playwright (fallback SPA) → WebSearch (último recurso)
+   b. **Extrair JD** usando Playwright (browser_navigate + browser_snapshot) → WebFetch → WebSearch
    c. Se a URL não for acessível → marcar como `- [!]` com nota e continuar
    d. **Executar auto-pipeline completa**: Avaliação A-F → Report .md → PDF (se score >= 3.0) → Tracker
    e. **Mover de "Pendentes" para "Processadas"**: `- [x] #NNN | URL | Empresa | Vaga | Score/5 | PDF ✅/❌`
-3. **Se houver 3+ URLs pendentes**, lançar agentes em paralelo apenas para etapas sem Playwright (ex.: organização, MCP fetch/WebSearch).
+3. **Se houver 3+ URLs pendentes**, lançar agentes em paralelo apenas para etapas sem Playwright (ex.: organização, WebSearch/WebFetch).
    Se a extração exigir Playwright, processar serialmente (1 vaga por vez) para evitar conflito de sessão.
 4. **Ao terminar**, mostrar tabela resumo:
 
@@ -36,8 +36,8 @@ Processa URLs de vagas acumuladas em `data/pipeline.md`. O candidato adiciona UR
 
 ## Detecção inteligente de JD a partir da URL
 
-1. **MCP fetch (preferido):** `fetch` da URL. Converte HTML para markdown automaticamente. Funciona em todos os ambientes.
-2. **Playwright (fallback SPA):** `browser_navigate` + `browser_snapshot`. Para páginas que exigem JavaScript.
+1. **Playwright (preferido):** `browser_navigate` + `browser_snapshot`. Funciona com todas as SPAs.
+2. **WebFetch (fallback):** Para páginas estáticas ou quando Playwright não está disponível.
 3. **WebSearch (último recurso):** Buscar em portais secundários que indexam o JD.
 
 **Casos especiais:**
@@ -45,7 +45,7 @@ Processa URLs de vagas acumuladas em `data/pipeline.md`. O candidato adiciona UR
 - **PDF**: Se a URL aponta para um PDF, ler diretamente com o Read tool
 - **`local:` prefix**: Ler arquivo local. Exemplo: `local:jds/linkedin-pm-ai.md` → ler `jds/linkedin-pm-ai.md`
 - **Gupy / Greenhouse / Lever**: Plataformas comuns no Brasil. Playwright funciona bem com todas
-- **Vagas.com.br / InfoJobs / Catho**: Portais brasileiros, geralmente acessíveis via MCP fetch
+- **Vagas.com.br / InfoJobs / Catho**: Portais brasileiros, geralmente acessíveis via WebFetch
 - **LinkedIn BR**: Mesmas restrições do LinkedIn global — pode exigir login
 
 ## Numeração automática

@@ -199,18 +199,3 @@ In deutschen Stellenanzeigen und Vertragsverhandlungen tauchen Begriffe auf, die
 | Write | Temporäres HTML für PDF, applications.md, Reports .md |
 | Edit | Tracker aktualisieren |
 | Bash | `node generate-pdf.mjs` |
-
-### Plattform-Regeln (Nicht-Anthropic-Modelle)
-
-**Wenn du auf einem Nicht-Anthropic-Modell (GLM, Gemini, DeepSeek, Qwen usw.) ausfuehrst:**
-- **NICHT das eingebaute WebSearch-Tool verwenden.** Nicht-Anthropic-Modelle haben strenge WebSearch-Rate-Limits, die career-ops schnell erschöpft. Das Kontingent bewahren.
-- Jede WebSearch-Anweisung in Mode-Dateien durch WebFetch mit spezifischen, bekannten URLs ersetzen:
-  - Vergütungsdaten → WebFetch `https://www.levels.fyi/company/{company}/` oder `https://www.glassdoor.com/Overview/company-{slug}.htm`
-  - Unternehmensinfos → WebFetch der Karriereseite oder About-Seite des Unternehmens
-  - JD-Extraktion → WebFetch der JD-URL direkt (keine Suche nötig)
-  - LinkedIn-Kontakte → Kandidat nach Namen fragen, dann WebFetch der Profil-URL
-  - Entlassungsmeldungen → WebFetch bekannter Nachrichtenquellen, falls URL verfügbar, sonst überspringen
-- Pipeline-Fallback-Kette wird zu: **Playwright → WebFetch** (2 Stufen, keine WebSearch-Stufe)
-- Scan Level 3 (WebSearch-Discovery) ist **nicht verfügbar**. Unternehmen manuell in `tracked_companies` in `portals.yml` eintragen.
-
-**Wenn du auf einem Anthropic-Modell (Claude) ausfuehrst:** WebSearch wie dokumentiert verwenden. Alle Mode-Dateien funktionieren wie gehabt.

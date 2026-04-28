@@ -10,10 +10,9 @@ Claude workflow.
 ## Prerequisites
 
 - A Codex client that can work with project `AGENTS.md`
-- Node.js 18+ (unless using the Nix dev shell)
-- Playwright Chromium installed for PDF generation and reliable job verification (not needed inside the Nix flake shell)
-- (Optional) Nix with flakes enabled for a reproducible dev shell
-- Go 1.24+ if you want the TUI dashboard (already provided in the Nix dev shell)
+- Node.js 18+
+- Playwright Chromium installed for PDF generation and reliable job verification
+- Go 1.21+ if you want the TUI dashboard
 
 ## Install
 
@@ -21,26 +20,6 @@ Claude workflow.
 npm install
 npx playwright install chromium
 ```
-
-## Install with Nix (Alternative)
-
-Option A (automatic shell activation with `direnv`):
-
-```bash
-direnv allow
-npm install
-npm run doctor
-```
-
-Option B (manual shell activation):
-
-```bash
-nix develop
-npm install
-npm run doctor
-```
-
-When using Nix, Playwright browsers are provided by the flake environment, so you can skip `npx playwright install chromium`.
 
 ## Recommended Starting Prompts
 
@@ -50,19 +29,19 @@ When using Nix, Playwright browsers are provided by the flake environment, so yo
 
 ## Routing Map
 
-| User intent                     | Files Codex should read                       |
-| ------------------------------- | --------------------------------------------- |
-| Raw JD text or job URL          | `modes/_shared.md` + `modes/auto-pipeline.md` |
-| Single evaluation only          | `modes/_shared.md` + `modes/oferta.md`        |
-| Multiple offers                 | `modes/_shared.md` + `modes/ofertas.md`       |
-| Portal scan                     | `modes/_shared.md` + `modes/scan.md`          |
-| PDF generation                  | `modes/_shared.md` + `modes/pdf.md`           |
-| Live application help           | `modes/_shared.md` + `modes/apply.md`         |
-| Pipeline inbox processing       | `modes/_shared.md` + `modes/pipeline.md`      |
-| Tracker status                  | `modes/tracker.md`                            |
-| Deep company research           | `modes/deep.md`                               |
-| Training / certification review | `modes/training.md`                           |
-| Project evaluation              | `modes/project.md`                            |
+| User intent | Files Codex should read |
+|-------------|-------------------------|
+| Raw JD text or job URL | `modes/_shared.md` + `modes/auto-pipeline.md` |
+| Single evaluation only | `modes/_shared.md` + `modes/oferta.md` |
+| Multiple offers | `modes/_shared.md` + `modes/ofertas.md` |
+| Portal scan | `modes/_shared.md` + `modes/scan.md` |
+| PDF generation | `modes/_shared.md` + `modes/pdf.md` |
+| Live application help | `modes/_shared.md` + `modes/apply.md` |
+| Pipeline inbox processing | `modes/_shared.md` + `modes/pipeline.md` |
+| Tracker status | `modes/tracker.md` |
+| Deep company research | `modes/deep.md` |
+| Training / certification review | `modes/training.md` |
+| Project evaluation | `modes/project.md` |
 
 The key point: Codex support is additive. It should route into the existing
 Career-Ops modes and scripts rather than introducing a parallel automation
@@ -81,7 +60,6 @@ layer.
 ```bash
 npm run verify
 
-# optional dashboard build + run
-cd dashboard && go build -o career-dashboard .
-./career-dashboard --path ..
+# optional dashboard build
+cd dashboard && go build ./...
 ```

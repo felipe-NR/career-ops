@@ -118,30 +118,14 @@ After detecting archetype, read `modes/_profile.md` for the user's specific fram
 
 | Tool | Use |
 |------|-----|
-| MCP fetch (`fetch`) | **DEFAULT** web fetch tool. Use for ALL URL fetching — JD extraction, company pages, comp data, verification. Converts HTML to markdown automatically. Available in all environments. |
-| WebSearch | Comp research, trends, company culture, LinkedIn contacts — only when you need to SEARCH (no known URL). Not for fetching known URLs. |
-| Playwright | Fallback for JS-heavy SPAs that MCP fetch cannot render. Also for PDF generation. **NEVER 2+ agents with Playwright in parallel.** |
+| WebSearch | Comp research, trends, company culture, LinkedIn contacts, fallback for JDs |
+| WebFetch | Fallback for extracting JDs from static pages |
+| Playwright | Verify offers (browser_navigate + browser_snapshot). **NEVER 2+ agents with Playwright in parallel.** |
 | Read | cv.md, _profile.md, article-digest.md, cv-template.html |
 | Write | Temporary HTML for PDF, applications.md, reports .md |
 | Edit | Update tracker |
 | Canva MCP | Optional visual CV generation. Duplicate base design, edit text, export PDF. Requires `cv.canva_resume_design_id` in profile.yml. |
 | Bash | `node generate-pdf.mjs` |
-
-### Platform Rules (Non-Anthropic Models)
-
-**If running on a non-Anthropic model (GLM, Gemini, DeepSeek, Qwen, etc.):**
-- **MCP fetch is the primary tool.** Use `fetch` for all URL fetching — it has no rate limits and works identically across all models.
-- **DO NOT use the built-in WebSearch tool.** Non-Anthropic models have aggressive WebSearch rate limits that career-ops exhausts quickly. Preserve the quota.
-- Replace every WebSearch instruction in mode files with MCP fetch using specific, known URLs:
-  - Comp data → `fetch` `https://www.levels.fyi/company/{company}/` or `https://www.glassdoor.com/Overview/company-{slug}.htm`
-  - Company info → `fetch` the company's careers page or About page
-  - JD extraction → `fetch` the JD URL directly (no search needed)
-  - LinkedIn contacts → Ask candidate for names, then `fetch` their profile URL
-  - Layoff news → `fetch` known news sources if URL is available, otherwise skip
-- Pipeline fallback chain becomes: **MCP fetch → Playwright** (2 tiers, no WebSearch tier)
-- Scan Level 3 (WebSearch discovery) is **unavailable**. Users should add companies to `tracked_companies` in `portals.yml` manually.
-
-**If running on an Anthropic model (Claude):** MCP fetch is still the default for URL fetching. Use WebSearch only for broad discovery when no specific URL is known.
 
 ### Time-to-offer priority
 - Working demo + metrics > perfection

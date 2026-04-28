@@ -129,8 +129,6 @@ When using the [Gemini CLI](https://github.com/google-gemini/gemini-cli), the fo
 
 If `modes/_profile.md` is missing, copy from `modes/_profile.template.md` silently. This is the user's customization file — it will never be overwritten by updates.
 
-If `interview-prep/story-bank.md` is missing, copy from `interview-prep/story-bank.template.md` silently. This file accumulates personal STAR+R stories over time and should not be tracked in git.
-
 **If ANY of these is missing, enter onboarding mode.** Do NOT proceed with evaluations, scans, or any other mode until the basics are in place. Guide the user step by step:
 
 #### Step 1: CV (required)
@@ -283,13 +281,12 @@ Default modes are in `modes/` (English). Additional language-specific modes are 
 
 ## Offer Verification -- MANDATORY
 
-**ALWAYS use MCP fetch (`fetch` tool) to fetch any URL.** This is the default web fetch tool across all environments and models:
-1. `fetch` the URL to retrieve page content as markdown
-2. Only footer/navbar without JD = closed. Title + description + Apply = active.
+**NEVER trust WebSearch/WebFetch to verify if an offer is still active.** ALWAYS use Playwright:
+1. `browser_navigate` to the URL
+2. `browser_snapshot` to read content
+3. Only footer/navbar without JD = closed. Title + description + Apply = active.
 
-**Fallback chain:** MCP fetch → Playwright (`browser_navigate` + `browser_snapshot`) if the page requires JavaScript rendering (SPAs).
-
-**Exception for batch workers (`claude -p`):** If neither MCP fetch nor Playwright is available, mark the report header with `**Verification:** unconfirmed (batch mode)`. The user can verify manually later.
+**Exception for batch workers (`claude -p`):** Playwright is not available in headless pipe mode. Use WebFetch as fallback and mark the report header with `**Verification:** unconfirmed (batch mode)`. The user can verify manually later.
 
 ---
 
@@ -315,7 +312,6 @@ Default modes are in `modes/` (English). Additional language-specific modes are 
 - Output in `output/` (gitignored), Reports in `reports/`
 - JDs in `jds/` (referenced as `local:jds/{file}` in pipeline.md)
 - Batch in `batch/` (gitignored except scripts and prompt)
-- Optional devcontainer at `.devcontainer/devcontainer.json` (Nix feature + Node 24.15.0, reuses `flake.nix`). Works with OpenCode via `opencode-devcontainers`, with Claude Code via VS Code Dev Containers or `openpackage`. Guide: `docs/DEVCONTAINER.md`.
 - Report numbering: sequential 3-digit zero-padded, max existing + 1
 - **RULE: After each batch of evaluations, run `node merge-tracker.mjs`** to merge tracker additions and avoid duplications.
 - **RULE: NEVER create new entries in applications.md if company+role already exists.** Update the existing entry.

@@ -198,7 +198,7 @@ Em vagas e negociações brasileiras, existem termos e práticas que não aparec
 3. Ao fazer matching, citar linhas exatas do currículo
 4. Usar WebSearch para dados de remuneração e empresa
 5. Registrar no tracker após cada avaliação
-6. Gerar todo o conteúdo sempre em português (PT-BR), independente do idioma da vaga
+6. Gerar conteúdo na língua da descrição da vaga (PT-BR padrão)
 7. Ser direto e prático — sem enrolação
 8. Ao gerar texto em português (PDF summaries, bullets, mensagens LinkedIn, histórias STAR): português tech natural, não tradução literal. Frases curtas, verbos de ação, evitar voz passiva. Termos técnicos (stack, pipeline, deployment, embedding) não precisam ser traduzidos
 8b. **URLs de case studies no PDF Professional Summary:** Se o PDF menciona case studies ou demos, as URLs DEVEM aparecer já no primeiro parágrafo (Professional Summary). Recrutadores frequentemente só leem o resumo. Todos os URLs no HTML com `white-space: nowrap`
@@ -209,26 +209,10 @@ Em vagas e negociações brasileiras, existem termos e práticas que não aparec
 
 | Tool | Uso |
 |------|-----|
-| MCP fetch (`fetch`) | **PADRÃO** para web fetch. Usar para TODOS os acessos a URLs — extração de JD, páginas de empresas, dados de remuneração, verificação. Converte HTML para markdown automaticamente. Disponível em todos os ambientes. |
-| WebSearch | Pesquisa de remuneração, tendências, cultura da empresa, contatos LinkedIn — somente quando precisa BUSCAR (sem URL conhecida). |
-| Playwright | Fallback para SPAs que exigem JavaScript que o MCP fetch não consegue renderizar. Também para geração de PDF. **CRÍTICO: NUNCA iniciar 2+ agentes com Playwright em paralelo — eles compartilham a mesma instância do navegador** |
+| WebSearch | Pesquisa de remuneração, tendências, cultura da empresa, contatos LinkedIn, fallback para descrições de vagas |
+| WebFetch | Fallback para extrair descrições de vagas de páginas estáticas |
+| Playwright | Verificar se vagas ainda estão ativas (browser_navigate + browser_snapshot), extrair descrições de SPAs. **CRÍTICO: NUNCA iniciar 2+ agentes com Playwright em paralelo — eles compartilham a mesma instância do navegador** |
 | Read | cv.md, _profile.md, article-digest.md, cv-template.html |
 | Write | HTML temporário para PDF, reports .md, TSV em `batch/tracker-additions/` |
 | Edit | Ajustes de conteúdo (não usar para criar novos registros no tracker) |
 | Bash | `node generate-pdf.mjs`, `node merge-tracker.mjs` |
-
-### Regras de Plataforma (Modelos não-Anthropic)
-
-**Se estiver rodando em um modelo não-Anthropic (GLM, Gemini, DeepSeek, Qwen, etc.):**
-- **MCP fetch é a ferramenta principal.** Use `fetch` para todos os acessos a URLs — sem limites de taxa e funciona de forma idêntica em todos os modelos.
-- **NÃO usar a ferramenta WebSearch integrada.** Modelos não-Anthropic têm limites de taxa rigorosos no WebSearch que o career-ops esgota rapidamente. Preserve a cota.
-- Substitua cada instrução WebSearch nos arquivos de modo por MCP fetch com URLs específicas e conhecidas:
-  - Dados de remuneração → `fetch` `https://www.levels.fyi/company/{company}/` ou `https://www.glassdoor.com/Overview/company-{slug}.htm`
-  - Informações da empresa → `fetch` da página de carreiras ou página Sobre da empresa
-  - Extração de JD → `fetch` da URL do JD diretamente (sem busca necessária)
-  - Contatos no LinkedIn → Pedir nomes ao candidato, depois `fetch` da URL do perfil
-  - Notícias de demissões → `fetch` de fontes de notícias conhecidas se a URL estiver disponível, senão pular
-- A cadeia de fallback do pipeline passa a ser: **MCP fetch → Playwright** (2 níveis, sem nível WebSearch)
-- Scan Nível 3 (descoberta via WebSearch) está **indisponível**. Adicione empresas manualmente em `tracked_companies` no `portals.yml`.
-
-**Se estiver rodando em um modelo Anthropic (Claude):** MCP fetch continua sendo o padrão para acessos a URLs. Use WebSearch somente para descoberta ampla quando não houver URL específica conhecida.

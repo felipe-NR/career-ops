@@ -13,7 +13,7 @@
 import { chromium } from 'playwright';
 import { resolve, dirname } from 'path';
 import { readFile } from 'fs/promises';
-import { mkdirSync, readFileSync, existsSync } from 'fs';
+import { mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -72,26 +72,6 @@ function normalizeTextForATS(html) {
     t = t.replace(/\u00A0/g, () => { bump('nbsp', 1); return ' '; });
     return t;
   }
-}
-
-/**
- * Detect FONTCONFIG_FILE from the Nix Chromium wrapper script.
- * In Nix devcontainers, Playwright launches the wrapper but the env vars
- * it sets (FONTCONFIG_FILE) may not reach the browser process, causing
- * all text to render with zero height → blank PDFs.
- */
-function detectFontconfigFile() {
-  if (process.env.FONTCONFIG_FILE && existsSync(process.env.FONTCONFIG_FILE)) {
-    return process.env.FONTCONFIG_FILE;
-  }
-  try {
-    const execPath = chromium.executablePath();
-    if (!execPath) return undefined;
-    const wrapper = readFileSync(execPath, 'utf-8');
-    const match = wrapper.match(/FONTCONFIG_FILE=\$\{FONTCONFIG_FILE-['"]([^'"]+)['"]/);
-    if (match && existsSync(match[1])) return match[1];
-  } catch {}
-  return undefined;
 }
 
 async function generatePDF() {
@@ -153,13 +133,7 @@ async function generatePDF() {
     console.log(`🧹 ATS normalization: ${totalReplacements} replacements (${breakdown})`);
   }
 
-  const fontconfigFile = detectFontconfigFile();
-  const browserEnv = { ...process.env };
-  if (fontconfigFile) {
-    browserEnv.FONTCONFIG_FILE = fontconfigFile;
-  }
-
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'], env: browserEnv });
+  const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage();
 
@@ -196,10 +170,6 @@ async function generatePDF() {
     console.log(`✅ PDF generated: ${outputPath}`);
     console.log(`📊 Pages: ${pageCount}`);
     console.log(`📦 Size: ${(pdfBuffer.length / 1024).toFixed(1)} KB`);
-
-    if (pageCount === 1 && pdfBuffer.length < 2000) {
-      console.warn('⚠️  PDF appears blank (1 page, <2KB). Likely a font rendering issue — check FONTCONFIG_FILE.');
-    }
 
     return { outputPath, pageCount, size: pdfBuffer.length };
   } finally {
