@@ -24,6 +24,24 @@ const DEFAULTS = {
   ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.5-air',
 };
 
+const REQUIRED_VARS = new Set(['CLAUDE_GLM_AUTH_TOKEN']);
+
+const ENV_ALIASES = {
+  CLAUDE_GLM_AUTH_TOKEN: ['CLAUDE_GLM_AUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN'],
+};
+
+function resolveEnvValue(varName) {
+  const aliasList = ENV_ALIASES[varName] ?? [varName];
+  for (const envName of aliasList) {
+    const value = process.env[envName];
+    if (value != null && value !== '') {
+      return { value: String(value), source: envName };
+    }
+  }
+
+  return { value: '', source: '' };
+}
+
 function parseArgs(argv) {
   const args = argv.slice(2);
 
@@ -42,8 +60,9 @@ function parseArgs(argv) {
 }
 
 function renderTemplate(templateObject) {
-  let missingAuthToken = false;
+  const missingRequiredVars = new Set();
   const unresolvedVars = new Set();
+  const deprecatedVarsUsed = new Set();
 
   const rendered = JSON.parse(JSON.stringify(templateObject));
 
@@ -53,17 +72,20 @@ function renderTemplate(templateObject) {
     }
 
     rendered.env[key] = value.replace(/\{\{([A-Z0-9_]+)\}\}/g, (_, varName) => {
-      const fromEnv = process.env[varName];
-      if (fromEnv != null && fromEnv !== '') {
-        return String(fromEnv);
+      const resolved = resolveEnvValue(varName);
+      if (resolved.value !== '') {
+        if (resolved.source !== varName) {
+          deprecatedVarsUsed.add(`${resolved.source} -> ${varName}`);
+        }
+        return resolved.value;
       }
 
       if (Object.hasOwn(DEFAULTS, varName)) {
         return DEFAULTS[varName];
       }
 
-      if (varName === 'ANTHROPIC_AUTH_TOKEN') {
-        missingAuthToken = true;
+      if (REQUIRED_VARS.has(varName)) {
+        missingRequiredVars.add(varName);
         return '';
       }
 
@@ -72,7 +94,7 @@ function renderTemplate(templateObject) {
     });
   }
 
-  return { rendered, missingAuthToken, unresolvedVars };
+  return { rendered, missingRequiredVars, unresolvedVars, deprecatedVarsUsed };
 }
 
 function main() {
@@ -93,11 +115,17 @@ function main() {
     process.exit(1);
   }
 
-  const { rendered, missingAuthToken, unresolvedVars } = renderTemplate(template);
+  const { rendered, missingRequiredVars, unresolvedVars, deprecatedVarsUsed } = renderTemplate(template);
 
-  if (missingAuthToken) {
+  if (deprecatedVarsUsed.size > 0) {
     console.error(
-      '[render-claude-settings] Skipping settings generation: set ANTHROPIC_AUTH_TOKEN in .env'
+      `[render-claude-settings] Deprecated env var alias detected: ${Array.from(deprecatedVarsUsed).join(', ')}. Use CLAUDE_GLM_AUTH_TOKEN in .env.`
+    );
+  }
+
+  if (missingRequiredVars.size > 0) {
+    console.error(
+      `[render-claude-settings] Skipping settings generation: set ${Array.from(missingRequiredVars).join(', ')} in .env`
     );
     process.exit(0);
   }

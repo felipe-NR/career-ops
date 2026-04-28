@@ -136,7 +136,9 @@ devcontainer up --workspace-folder .
 
 **`claude` / `claude-glm` aliases not found.** These are added by `post-create.sh` during container setup. If missing, rerun `.devcontainer/post-create.sh` or rebuild the container.
 
-**`claude-glm` fails with missing auth token or settings file.** The devcontainer no longer bind-mounts `~/.claude`. During setup, `post-create.sh` calls `.devcontainer/render-claude-settings.mjs`, which renders `/home/vscode/.claude/settings-glm.json` from `.devcontainer/claude-settings-glm.template.json` using values from `.env` via `direnv`. Set `ANTHROPIC_AUTH_TOKEN` in `.env`, then rerun `.devcontainer/post-create.sh`.
+**`claude-glm` fails with missing auth token or settings file.** The devcontainer no longer bind-mounts `~/.claude`. During setup, `post-create.sh` calls `.devcontainer/render-claude-settings.mjs`, which renders `/home/vscode/.claude/settings-glm.json` from `.devcontainer/claude-settings-glm.template.json` using values from `.env` via `direnv`. Set `CLAUDE_GLM_AUTH_TOKEN` in `.env`, then rerun `.devcontainer/post-create.sh`.
+
+**`claude` shows `Invalid bearer token` even after `/login`.** Check `.env` and remove `ANTHROPIC_AUTH_TOKEN` from the shell environment. Keep GLM credentials under `CLAUDE_GLM_AUTH_TOKEN` so the standard `claude` alias stays on login-based auth while `claude-glm` keeps using `/home/vscode/.claude/settings-glm.json`.
 
 ## Limitations
 
