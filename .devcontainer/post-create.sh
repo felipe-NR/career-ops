@@ -45,6 +45,12 @@ if [ -f "$CLAUDE_SETTINGS_TEMPLATE" ] && [ -f "$CLAUDE_SETTINGS_RENDERER" ]; the
 fi
 
 # Add claude aliases to both bash and zsh (container paths)
+# Bell notification workaround: In SSH→Docker setups, the terminal bell from Stop hooks
+# (printf '\a') does not reach the host terminal. Claude Code's internal notification
+# system DOES work when AskUserQuestion is shown. The agreed workaround is for Claude
+# to end responses with a mock AskUserQuestion (2-3 options like OK/Done) to trigger
+# the bell. This is configured via auto-memory (feedback_bell_notification.md).
+# The Stop hook is still included in the settings template as a fallback for local setups.
 for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
   if [ ! -f "$rcfile" ]; then
     continue

@@ -7,5 +7,18 @@
         "ANTHROPIC_DEFAULT_OPUS_MODEL": "{{ANTHROPIC_DEFAULT_OPUS_MODEL}}",
         "ANTHROPIC_DEFAULT_SONNET_MODEL": "{{ANTHROPIC_DEFAULT_SONNET_MODEL}}",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ANTHROPIC_DEFAULT_HAIKU_MODEL}}"
+    },
+    "preferredNotifChannel": "terminal_bell",
+    "hooks": {
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "printf '\\a'"
+                    }
+                ]
+            }
+        ]
     }
 }
