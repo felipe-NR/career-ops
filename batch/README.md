@@ -4,6 +4,9 @@ Process multiple job offers in parallel via headless workers. Each worker runs t
 
 To make Codex the persistent default for this workspace, add `CAREER_OPS_CLI=codex` to `.env`. For a single run, use `--cli codex` instead.
 
+With `spend_tier: standard`, Codex workers are pinned to `gpt-5.5` with
+`model_reasoning_effort=medium`. An explicit `--model` override still wins.
+
 ## Quick Start
 
 1. **Add offers** to `batch-input.tsv` (tab-separated: `id`, `url`, `source`, `notes`):

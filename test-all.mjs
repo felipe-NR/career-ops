@@ -10060,10 +10060,18 @@ function makeTierFixture(profileYml) {
     'printf "%s\\n" "$@" > "$BATCH_ARG_FILE"',
     'exit 0',
   ].join('\n') + '\n');
+  writeFileSync(join(fakeBin, 'codex'), [
+    '#!/usr/bin/env bash',
+    'printf "%s\\n" "$@" > "$BATCH_ARG_FILE"',
+    'cat >/dev/null',
+    'exit 0',
+  ].join('\n') + '\n');
   if (process.platform === 'win32') {
     try { execFileSync(getBash(), ['-c', 'chmod +x bin/claude'], { cwd: tmp }); } catch {}
+    try { execFileSync(getBash(), ['-c', 'chmod +x bin/codex'], { cwd: tmp }); } catch {}
   } else {
     execFileSync('chmod', ['+x', join(fakeBin, 'claude')]);
+    execFileSync('chmod', ['+x', join(fakeBin, 'codex')]);
   }
   return { tmp, batchDir, fakeBin };
 }
@@ -10142,6 +10150,21 @@ try {
   }
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 } catch (e) { fail(`Batch spend_tier routing test crashed (invalid value): ${e.message}`); }
+
+// Codex standard tier pins both model and reasoning effort
+try {
+  const { tmp, batchDir, fakeBin } = makeTierFixture('spend_tier: standard\n');
+  const argFile = join(tmp, 'codex-argv.txt');
+  const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: argFile };
+  const codexOut = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--cli', 'codex', '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
+  const codexArgv = existsSync(argFile) ? readFileSync(argFile, 'utf-8') : '';
+  if (codexArgv.includes('--model') && codexArgv.includes('gpt-5.5') && codexArgv.includes('model_reasoning_effort="medium"') && codexOut.includes('spend_tier=standard')) {
+    pass('Codex standard spend_tier resolves to gpt-5.5 with medium reasoning');
+  } else {
+    fail(`Codex standard tier routing mismatch: argv=${JSON.stringify(codexArgv)}, out=${JSON.stringify(codexOut.slice(-240))}`);
+  }
+  try { rmSync(tmp, { recursive: true, force: true }); } catch {}
+} catch (e) { fail(`Batch spend_tier routing test crashed (Codex standard): ${e.message}`); }
 
 // ── 14b. BATCH PRE-SCREEN DISCARD LOG ────────────────────────────
 
