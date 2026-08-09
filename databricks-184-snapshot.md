@@ -1,0 +1,183 @@
+- generic [ref=f9e1]:
+  - generic [ref=f9e4]:
+    - link "Skip to main content" [ref=f9e5] [cursor=pointer]:
+      - /url: "#main"
+    - navigation "Main Navigation" [ref=f9e6]:
+      - generic [ref=f9e7]:
+        - link "Header databricks logo" [ref=f9e8] [cursor=pointer]:
+          - /url: /
+          - figure [ref=f9e9]
+        - generic [ref=f9e11]:
+          - generic [ref=f9e12]:
+            - button "Switch language. Current Language - English" [ref=f9e14] [cursor=pointer]
+            - button "Site search" [ref=f9e18] [cursor=pointer]
+          - link "Login" [ref=f9e22] [cursor=pointer]:
+            - /url: https://login.databricks.com/?dbx_source=www&itm=main-cta-login&l=en-EN
+          - button "Open menu" [ref=f9e24] [cursor=pointer]
+      - generic [ref=f9e25]:
+        - generic [ref=f9e26]:
+          - list [ref=f9e27]:
+            - listitem [ref=f9e28]:
+              - button "Why Databricks" [ref=f9e30] [cursor=pointer]
+            - listitem [ref=f9e33]:
+              - button "Product" [ref=f9e35] [cursor=pointer]
+            - listitem [ref=f9e38]:
+              - button "Solutions" [ref=f9e40] [cursor=pointer]
+            - listitem [ref=f9e43]:
+              - button "Resources" [ref=f9e45] [cursor=pointer]
+            - listitem [ref=f9e48]:
+              - button "About" [ref=f9e50] [cursor=pointer]
+          - list [ref=f9e55]:
+            - listitem [ref=f9e56]:
+              - generic [ref=f9e57]: Ready to get started?
+            - listitem [ref=f9e58]:
+              - link "Get a Demo" [ref=f9e59] [cursor=pointer]:
+                - /url: /resources/demos
+        - list [ref=f9e60]:
+          - listitem [ref=f9e61]:
+            - link "Contact Us" [ref=f9e62] [cursor=pointer]:
+              - /url: /company/contact
+          - listitem [ref=f9e63]:
+            - link "Try Databricks in Main Navigation" [ref=f9e64] [cursor=pointer]:
+              - /url: https://www.databricks.com/signup?dbx_source=www&itm_data=dbx-web-nav&l=en-EN&itm_source=www&itm_category=company&itm_page=manager-forward-deployed-engineering---manufacturing-8585023002&itm_location=nav&itm_component=menu-area&itm_offer=signup
+              - text: Try Databricks
+    - generic [ref=f9e65]:
+      - generic [ref=f9e67]:
+        - generic [ref=f9e74]:
+          - link "Overview" [ref=f9e75] [cursor=pointer]:
+            - /url: /company/careers
+          - link "Culture" [ref=f9e76] [cursor=pointer]:
+            - /url: /company/careers/culture?itm_data=careers-hp-nav-culture
+          - link "Benefits" [ref=f9e77] [cursor=pointer]:
+            - /url: /company/careers/benefits?itm_data=careers-hp-nav-benefits
+          - link "Diversity" [ref=f9e78] [cursor=pointer]:
+            - /url: /company/careers/diversity-and-inclusion?itm_data=careers-hp-nav-diversity
+          - link "Engineering" [ref=f9e79] [cursor=pointer]:
+            - /url: /company/careers/engineering-at-databricks?itm_data=careers-hp-nav-engineering
+          - link "Research" [ref=f9e80] [cursor=pointer]:
+            - /url: /research#careers
+          - link "Students & new grads" [ref=f9e81] [cursor=pointer]:
+            - /url: /company/careers/university-recruiting?itm_data=careers-hp-nav-students
+        - link "Back to search results" [ref=f9e83] [cursor=pointer]:
+          - /url: /company/careers/open-positions
+        - generic [ref=f9e86]:
+          - heading "Manager, Forward Deployed Engineering - Manufacturing" [level=1] [ref=f9e87]
+          - generic [ref=f9e89]:
+            - text: Remote - California
+            - paragraph [ref=f9e90]:
+              - button "Apply now" [ref=f9e91] [cursor=pointer]
+        - main [ref=f9e92]:
+          - generic [ref=f9e93]:
+            - generic [ref=f9e95]:
+              - paragraph [ref=f9e96]: CSQ227R79
+              - paragraph [ref=f9e97]: Databricks is redefining what organisations can achieve with data and AI. As the unified platform powering the world's most ambitious data-driven enterprises, we sit at the intersection of cloud migrations, AI transformation, and real-time intelligence and our customers challenge us every day to go further.
+              - paragraph [ref=f9e98]:
+                - text: As
+                - strong [ref=f9e99]: Manager, Forward Deployed Engineering
+                - text: ", you will lead a high-performing team of Forward Deployed Engineers (FDEs) at the forefront of this transformation. Partnering with Databricks' most strategic enterprise customers across Manufacturing, you will shape how leading organizations migrate to the lakehouse, build next-generation AI and GenAI systems, and unlock sustained business value from their data investments."
+              - paragraph [ref=f9e100]: As a people leader, you will build and scale a team that represents Databricks' highest standard of technical excellence and customer impact. Your team will partner with enterprises across industries to architect and deliver mission-critical solutions, from large-scale data migrations and legacy modernization programs to cutting-edge generative AI, MLOps, and AI agent deployments. You will set the bar for delivery quality, grow world-class talent, and drive the strategic governance framework that ensures every engagement is executed with precision and measurable impact.
+              - paragraph [ref=f9e101]:
+                - strong [ref=f9e102]: While candidates in the listed location(s) are encouraged for this role, candidates in other locations will be considered.
+              - heading "The impact you will have:" [level=2] [ref=f9e103]
+              - list [ref=f9e104]:
+                - listitem [ref=f9e105]: Oversee regional performance targets including billable utilization, team growth, and hiring while championing delivery excellence and customer success across the FDE portfolio.
+                - listitem [ref=f9e106]: Partner with Account Executives, Engagement Managers, and Field Engineering leaders to position, scope, and deliver transformational Professional Services (PS) programs spanning data migrations, AI/ML platforms, and advanced analytics.
+                - listitem [ref=f9e107]: Establish best practices for project oversight, risk management, and quality standards that scale with a growing FDE practice, ensuring projects are delivered on time and to specification.
+                - listitem [ref=f9e108]: Synthesize field insights from your team’s engagements to provide direct feedback to Engineering and Product management, helping to guide the Databricks roadmap while driving the creation of reusable customer accelerators and frameworks.
+                - listitem [ref=f9e109]: Serve as the critical escalation point for high-stakes customer situations, leveraging deep technical credibility and leadership judgment to protect strategic relationships and drive rapid resolution.
+                - listitem [ref=f9e110]: Mentor Forward Deployed Engineers through structured career pathways, technical coaching, and a culture of innovation, mastery, and continuous growth.
+              - heading "What we look for:" [level=2] [ref=f9e111]
+              - list [ref=f9e112]:
+                - listitem [ref=f9e113]: 4+ years of people leadership experience managing high-performing technical delivery teams, solution architects, or professional services organizations with a proven track record of building excellence-driven cultures.
+                - listitem [ref=f9e114]: 5+ years of hands-on individual contributor experience as a technical solutions architect or data/AI engineer, providing the technical depth to coach and credibly support senior practitioners.
+                - listitem [ref=f9e115]: Demonstrated success leading large-scale data platform migrations and AI/ML programs within enterprise environments, across industries such as Manufacturing, Finance, Healthcare, Retail, Telco, or Energy.
+                - listitem [ref=f9e116]: Strong understanding of technical project delivery, including managing scope, timelines, statements of work (SOWs), and professional services delivery metrics.
+                - listitem [ref=f9e117]: Strong stakeholder management skills, with experience navigating complex, high-stakes customer environments and influencing at the C-suite level.
+                - listitem [ref=f9e118]: Familiarity with Databricks, Apache Spark™, MLflow, Delta Lake, or the modern data and AI ecosystem; hands-on experience with Databricks or a direct competitor is highly valued.
+                - listitem [ref=f9e119]: Ability to travel to customer sites and Databricks offices approximately 20% of the time.
+              - generic [ref=f9e121]:
+                - generic [ref=f9e122]
+                - generic [ref=f9e128]: Local Pay Range
+                - generic [ref=f9e129]: $211,800—$291,300 USD
+              - generic [ref=f9e130]:
+                - paragraph [ref=f9e131]
+                - paragraph [ref=f9e133]
+                - paragraph [ref=f9e141]
+                - paragraph [ref=f9e143]: At Databricks, we are committed to fostering a diverse and inclusive culture where everyone can excel. We take great care to ensure that our hiring practices are inclusive and meet equal employment opportunity standards. Individuals looking for employment at Databricks are considered without regard to age, color, disability, ethnicity, family or marital status, gender identity or expression, language, national origin, physical and mental ability, political affiliation, race, religion, sexual orientation, socio-economic status, veteran status, and other protected characteristics.
+                - paragraph [ref=f9e144]
+                - paragraph [ref=f9e146]
+            - iframe [ref=f9e234]
+      - contentinfo [ref=f9e149]:
+        - generic [ref=f9e150]:
+          - generic [ref=f9e151]:
+            - link "databricks logo" [ref=f9e156] [cursor=pointer]:
+              - /url: https://www.databricks.com/
+              - figure [ref=f9e157]:
+                - img "databricks logo" [ref=f9e162]
+            - generic [ref=f9e163]:
+              - generic [ref=f9e167]:
+                - button "Why Databricks" [ref=f9e168] [cursor=pointer]
+                - button "Why Databricks" [ref=f9e235] [cursor=pointer]
+              - generic [ref=f9e172]:
+                - button "Product" [ref=f9e173] [cursor=pointer]
+                - button "Product" [ref=f9e238] [cursor=pointer]
+              - generic [ref=f9e177]:
+                - button "Solutions" [ref=f9e178] [cursor=pointer]
+                - button "Solutions" [ref=f9e241] [cursor=pointer]
+              - generic [ref=f9e182]:
+                - button "Resources" [ref=f9e183] [cursor=pointer]
+                - button "Resources" [ref=f9e244] [cursor=pointer]
+              - generic [ref=f9e187]:
+                - button "About" [ref=f9e188] [cursor=pointer]
+                - button "About" [ref=f9e247] [cursor=pointer]
+            - generic [ref=f9e189]:
+              - generic [ref=f9e190]:
+                - paragraph [ref=f9e192]: Databricks Inc. 160 Spear Street, 15th Floor San Francisco, CA 94105 1-866-330-0121
+                - generic [ref=f9e193]
+              - list [ref=f9e251]:
+                - listitem [ref=f9e252]
+                - listitem [ref=f9e256]
+                - listitem [ref=f9e260]
+                - listitem [ref=f9e264]
+                - listitem [ref=f9e268]
+                - listitem [ref=f9e273]
+          - generic [ref=f9e210]:
+            - paragraph [ref=f9e217]:
+              - text: © Databricks 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the
+              - link "The Apache Software Foundation" [ref=f9e218] [cursor=pointer]:
+                - /url: https://www.apache.org/
+                - text: Apache Software Foundation
+              - text: .
+            - list [ref=f9e219]:
+              - listitem [ref=f9e220]:
+                - link "Read Privacy Notice" [ref=f9e221] [cursor=pointer]:
+                  - /url: https://www.databricks.com/legal/privacynotice
+              - listitem [ref=f9e222]:
+                - text: "|"
+                - link "Read Terms of Use" [ref=f9e223] [cursor=pointer]:
+                  - /url: https://www.databricks.com/legal/terms-of-use
+              - listitem [ref=f9e224]:
+                - text: "|"
+                - link "Read Modern Slavery Statement" [ref=f9e225] [cursor=pointer]:
+                  - /url: https://www.databricks.com/legal/modern-slavery-policy-statement
+              - listitem [ref=f9e226]:
+                - text: "|"
+                - link "Read California Privacy" [ref=f9e227] [cursor=pointer]:
+                  - /url: https://www.databricks.com/legal/supplemental-privacy-notice-california-residents
+              - listitem [ref=f9e228]:
+                - text: "|"
+                - link "Read Your Privacy Choices" [ref=f9e229] [cursor=pointer]:
+                  - /url: "#yourprivacychoices"
+              - listitem [ref=f9e230]
+  - region "Cookie banner" [active] [ref=f9e278]:
+    - dialog "We Care About Your Privacy" [ref=f9e279]:
+      - generic [ref=f9e280]:
+        - generic [ref=f9e281]:
+          - generic:
+            - heading "We Care About Your Privacy" [level=2] [ref=f9e282]
+            - generic [ref=f9e283]: By clicking “Accept All Cookies”, you agree to the storing of cookies on your device to enhance site navigation, analyze site usage, and assist in our marketing efforts.
+        - generic [ref=f9e285]:
+          - button "Manage Preferences, Opens the preference center dialog" [ref=f9e286] [cursor=pointer]: Manage Preferences
+          - generic [ref=f9e287]:
+            - button "Reject all cookies" [ref=f9e288] [cursor=pointer]
+            - button "Accept all cookies" [ref=f9e289] [cursor=pointer]

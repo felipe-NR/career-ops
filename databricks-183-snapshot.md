@@ -1,0 +1,184 @@
+- generic [ref=e1]:
+  - generic [ref=e4]:
+    - link "Skip to main content" [ref=e5] [cursor=pointer]:
+      - /url: "#main"
+    - navigation "Main Navigation" [ref=e6]:
+      - generic [ref=e7]:
+        - link "Header databricks logo" [ref=e8] [cursor=pointer]:
+          - /url: /
+          - figure [ref=e9]
+        - generic [ref=e11]:
+          - generic [ref=e12]:
+            - button "Switch language. Current Language - English" [ref=e14] [cursor=pointer]
+            - button "Site search" [ref=e18] [cursor=pointer]
+          - link "Login" [ref=e22] [cursor=pointer]:
+            - /url: https://login.databricks.com/?dbx_source=www&itm=main-cta-login&l=en-EN
+          - button "Open menu" [ref=e24] [cursor=pointer]
+      - generic [ref=e25]:
+        - generic [ref=e26]:
+          - list [ref=e27]:
+            - listitem [ref=e28]:
+              - button "Why Databricks" [ref=e30] [cursor=pointer]
+            - listitem [ref=e33]:
+              - button "Product" [ref=e35] [cursor=pointer]
+            - listitem [ref=e38]:
+              - button "Solutions" [ref=e40] [cursor=pointer]
+            - listitem [ref=e43]:
+              - button "Resources" [ref=e45] [cursor=pointer]
+            - listitem [ref=e48]:
+              - button "About" [ref=e50] [cursor=pointer]
+          - list [ref=e55]:
+            - listitem [ref=e56]:
+              - generic [ref=e57]: Ready to get started?
+            - listitem [ref=e58]:
+              - link "Get a Demo" [ref=e59] [cursor=pointer]:
+                - /url: /resources/demos
+        - list [ref=e60]:
+          - listitem [ref=e61]:
+            - link "Contact Us" [ref=e62] [cursor=pointer]:
+              - /url: /company/contact
+          - listitem [ref=e63]:
+            - link "Try Databricks in Main Navigation" [ref=e64] [cursor=pointer]:
+              - /url: https://www.databricks.com/signup?dbx_source=www&itm_data=dbx-web-nav&l=en-EN&itm_source=www&itm_category=company&itm_page=ai-engineer---fde-forward-deployed-engineer-8099751002&itm_location=nav&itm_component=menu-area&itm_offer=signup
+              - text: Try Databricks
+    - generic [ref=e65]:
+      - generic [ref=e67]:
+        - generic [ref=e74]:
+          - link "Overview" [ref=e75] [cursor=pointer]:
+            - /url: /company/careers
+          - link "Culture" [ref=e76] [cursor=pointer]:
+            - /url: /company/careers/culture?itm_data=careers-hp-nav-culture
+          - link "Benefits" [ref=e77] [cursor=pointer]:
+            - /url: /company/careers/benefits?itm_data=careers-hp-nav-benefits
+          - link "Diversity" [ref=e78] [cursor=pointer]:
+            - /url: /company/careers/diversity-and-inclusion?itm_data=careers-hp-nav-diversity
+          - link "Engineering" [ref=e79] [cursor=pointer]:
+            - /url: /company/careers/engineering-at-databricks?itm_data=careers-hp-nav-engineering
+          - link "Research" [ref=e80] [cursor=pointer]:
+            - /url: /research#careers
+          - link "Students & new grads" [ref=e81] [cursor=pointer]:
+            - /url: /company/careers/university-recruiting?itm_data=careers-hp-nav-students
+        - link "Back to search results" [ref=e83] [cursor=pointer]:
+          - /url: /company/careers/open-positions
+        - generic [ref=e86]:
+          - heading "AI Engineer - FDE (Forward Deployed Engineer)" [level=1] [ref=e87]
+          - generic [ref=e89]:
+            - text: Remote - India
+            - paragraph [ref=e90]:
+              - button "Apply now" [ref=e91] [cursor=pointer]
+        - main [ref=e92]:
+          - generic [ref=e93]:
+            - generic [ref=e95]:
+              - paragraph [ref=e96]:
+                - strong [ref=e97]: CSQ326R35
+              - paragraph [ref=e98]:
+                - strong [ref=e99]: AI Engineer - FDE (Forward Deployed Engineer)
+              - paragraph [ref=e100]:
+                - strong [ref=e101]: Mission
+              - paragraph [ref=e102]: "The AI Forward Deployed Engineering (AI FDE) team is a highly specialized customer-facing AI team at Databricks. We deliver professional services engagements to help our customers build and productionize first-of-its-kind AI applications. We work cross-functionally to shape long-term strategic priorities and initiatives alongside engineering, product, and developer relations, as well as support internal subject matter expert (SME) teams. We view our team as an ensemble: we look for individuals with strong, unique specializations to improve the overall strength of the team. This team is the right fit for you if you love working with customers, teammates, and fueling your curiosity for the latest trends in GenAI, LLMOps, and ML more broadly. Open to remote locations."
+              - paragraph [ref=e103]:
+                - strong [ref=e104]: "The impact you will have:"
+              - list [ref=e105]:
+                - listitem [ref=e106]
+                - listitem [ref=e108]: Own production rollouts of consumer and internally facing GenAI applications
+                - listitem [ref=e109]: Serve as a trusted technical advisor to customers across a variety of domains
+                - listitem [ref=e110]: Present at conferences such as Data + AI Summit, recognized as a thought leader internally and externally
+                - listitem [ref=e111]: Collaborate cross-functionally with the product and engineering teams to influence priorities and shape the product roadmap
+              - paragraph [ref=e112]:
+                - strong [ref=e113]: "What we look for:"
+              - list [ref=e114]:
+                - listitem [ref=e115]: Experience building GenAI applications, including RAG, multi-agent systems, Text2SQL, fine-tuning, etc., with tools such as HuggingFace, LangChain, and DSPy
+                - listitem [ref=e116]: Expertise in deploying production-grade GenAI applications, including evaluation and optimizations
+                - listitem [ref=e117]: Extensive years of hands-on industry data science experience, leveraging common machine learning and data science tools, i.e. pandas, scikit-learn, PyTorch, etc.
+                - listitem [ref=e118]: Experience building production-grade machine learning deployments on AWS, Azure, or GCP
+                - listitem [ref=e119]: Graduate degree in a quantitative discipline (Computer Science, Engineering, Statistics, Operations Research, etc.) or equivalent practical experience
+                - listitem [ref=e120]: Experience communicating and/or teaching technical concepts to non-technical and technical audiences alike
+                - listitem [ref=e121]: Passion for collaboration, life-long learning, and driving business value through AI
+                - listitem [ref=e122]: "[Preferred] Experience using the Databricks Intelligence Platform and Apache Spark™ to process large-scale distributed datasets"
+                - listitem [ref=e123]: Willing to travel once every 4-8 weeks to see customers (as needed)
+              - generic [ref=e124]:
+                - paragraph [ref=e125]
+                - paragraph [ref=e127]
+                - paragraph [ref=e135]
+                - paragraph [ref=e137]: At Databricks, we are committed to fostering a diverse and inclusive culture where everyone can excel. We take great care to ensure that our hiring practices are inclusive and meet equal employment opportunity standards. Individuals looking for employment at Databricks are considered without regard to age, color, disability, ethnicity, family or marital status, gender identity or expression, language, national origin, physical and mental ability, political affiliation, race, religion, sexual orientation, socio-economic status, veteran status, and other protected characteristics.
+                - paragraph [ref=e138]
+                - paragraph [ref=e140]
+            - iframe [ref=e283]:
+              - generic [ref=f3e1]:
+                - main [ref=f3e2]
+                - iframe [ref=f3e276]:
+                  
+      - contentinfo [ref=e143]:
+        - generic [ref=e144]:
+          - generic [ref=e145]:
+            - link "databricks logo" [ref=e150] [cursor=pointer]:
+              - /url: https://www.databricks.com/
+              - figure [ref=e151]:
+                - img "databricks logo" [ref=e156]
+            - generic [ref=e157]:
+              - generic [ref=e161]:
+                - button "Why Databricks" [ref=e162] [cursor=pointer]
+                - button "Why Databricks" [ref=e163] [cursor=pointer]
+              - generic [ref=e169]:
+                - button "Product" [ref=e170] [cursor=pointer]
+                - button "Product" [ref=e171] [cursor=pointer]
+              - generic [ref=e177]:
+                - button "Solutions" [ref=e178] [cursor=pointer]
+                - button "Solutions" [ref=e179] [cursor=pointer]
+              - generic [ref=e185]:
+                - button "Resources" [ref=e186] [cursor=pointer]
+                - button "Resources" [ref=e187] [cursor=pointer]
+              - generic [ref=e193]:
+                - button "About" [ref=e194] [cursor=pointer]
+                - button "About" [ref=e195] [cursor=pointer]
+            - generic [ref=e198]:
+              - generic [ref=e199]:
+                - paragraph [ref=e201]: Databricks Inc. 160 Spear Street, 15th Floor San Francisco, CA 94105 1-866-330-0121
+                - generic [ref=e202]
+              - list [ref=e220]:
+                - listitem [ref=e221]
+                - listitem [ref=e225]
+                - listitem [ref=e229]
+                - listitem [ref=e233]
+                - listitem [ref=e237]
+                - listitem [ref=e242]
+          - generic [ref=e246]:
+            - paragraph [ref=e253]:
+              - text: © Databricks 2026. All rights reserved. Apache, Apache Spark, Spark, the Spark Logo, Apache Iceberg, Iceberg, and the Apache Iceberg logo are trademarks of the
+              - link "The Apache Software Foundation" [ref=e254] [cursor=pointer]:
+                - /url: https://www.apache.org/
+                - text: Apache Software Foundation
+              - text: .
+            - list [ref=e255]:
+              - listitem [ref=e256]:
+                - link "Read Privacy Notice" [ref=e257] [cursor=pointer]:
+                  - /url: https://www.databricks.com/legal/privacynotice
+              - listitem [ref=e258]:
+                - text: "|"
+                - link "Read Terms of Use" [ref=e259] [cursor=pointer]:
+                  - /url: https://www.databricks.com/legal/terms-of-use
+              - listitem [ref=e260]:
+                - text: "|"
+                - link "Read Modern Slavery Statement" [ref=e261] [cursor=pointer]:
+                  - /url: https://www.databricks.com/legal/modern-slavery-policy-statement
+              - listitem [ref=e262]:
+                - text: "|"
+                - link "Read California Privacy" [ref=e263] [cursor=pointer]:
+                  - /url: https://www.databricks.com/legal/supplemental-privacy-notice-california-residents
+              - listitem [ref=e264]:
+                - text: "|"
+                - link "Read Your Privacy Choices" [ref=e265] [cursor=pointer]:
+                  - /url: "#yourprivacychoices"
+              - listitem [ref=e266]
+  - region "Cookie banner" [active] [ref=e269]:
+    - dialog "We Care About Your Privacy" [ref=e270]:
+      - generic [ref=e271]:
+        - generic [ref=e272]:
+          - generic:
+            - heading "We Care About Your Privacy" [level=2] [ref=e273]
+            - generic [ref=e274]: By clicking “Accept All Cookies”, you agree to the storing of cookies on your device to enhance site navigation, analyze site usage, and assist in our marketing efforts.
+        - generic [ref=e276]:
+          - button "Manage Preferences, Opens the preference center dialog" [ref=e277] [cursor=pointer]: Manage Preferences
+          - generic [ref=e278]:
+            - button "Reject all cookies" [ref=e279] [cursor=pointer]
+            - button "Accept all cookies" [ref=e280] [cursor=pointer]
