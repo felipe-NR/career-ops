@@ -32,6 +32,13 @@ Read `portals.yml` which contains:
 
 ## Discovery Strategy (4 Levels)
 
+### Level −1 — Dedicated Scanners (ZERO-TOKEN, run separately)
+
+These run outside the agent and consume zero LLM tokens:
+
+- **`npm run scan:gupy`** (`scan-gupy.mjs`) — Gupy platform (BR market). Delegates all HTTP to the `gupy-job-scrapper` sibling project. The `site:gupy.io` WebSearch queries in `portals.yml` are **disabled** in Level 3 to avoid double-counting; run `scan-gupy.mjs` first and let the scanner handle Gupy coverage.
+- **`npm run scan:interamt`** (`scan-interamt.mjs`) — Interamt.de (German public sector, Playwright-driven).
+
 ### Level 0 — Local Parser (CHEAPEST)
 
 **For each company in `tracked_companies` with a configured `parser`:** execute the local parser defined in `portals.yml`. This level is ideal when the careers page uses SSR or stable HTML and there is already a local JavaScript, Python, or other runtime script that extracts jobs without agent assistance.
