@@ -61,6 +61,31 @@ const DEFAULT_KEYWORDS = [
 // ── Args ────────────────────────────────────────────────────────────────────
 
 const rawArgs = process.argv.slice(2);
+const VALID_RUNNERS = new Set(['auto', 'package', 'api']);
+const FLAG_OPTIONS = new Set(['--dry-run', '--debug', '--json', '--help']);
+const VALUE_OPTIONS = new Set(['--keyword', '--since', '--runner']);
+
+export function validateCliArgs(args) {
+  let runnerCount = 0;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (FLAG_OPTIONS.has(arg) || arg.startsWith('--since=')) continue;
+    if (VALUE_OPTIONS.has(arg)) {
+      if (arg === '--runner') runnerCount++;
+      const value = args[i + 1];
+      if (value == null || value.startsWith('--')) {
+        throw new Error(`${arg} requires a non-empty value`);
+      }
+      if (arg === '--keyword' && !value.trim()) {
+        throw new Error('--keyword requires a non-empty value');
+      }
+      i++;
+      continue;
+    }
+    throw new Error(`unknown option: ${arg}`);
+  }
+  if (runnerCount > 1) throw new Error('--runner must be passed at most once');
+}
 
 function argFlag(flag) { return rawArgs.includes(flag); }
 function argValues(flag) {
@@ -95,45 +120,145 @@ Configuration lives in portals.yml under the 'gupy:' key.
   process.exit(0);
 }
 
+try {
+  validateCliArgs(rawArgs);
+} catch (error) {
+  console.error(`ERROR: ${error.message}`);
+  process.exit(1);
+}
+
 const DRY_RUN   = argFlag('--dry-run');
 const DEBUG     = argFlag('--debug');
 const JSON_OUT  = argFlag('--json');
 const CLI_RUNNER = argValue('--runner');
-const CLI_SINCE  = argValue('--since');
-const CLI_KWS    = argValues('--keyword');
+const CLI_KWS    = argValues('--keyword').map(keyword => keyword.trim()).filter(Boolean);
+
+export function validateRunner(value) {
+  const runner = String(value || 'auto').trim().toLowerCase();
+  if (!VALID_RUNNERS.has(runner)) {
+    throw new Error(`runner must be one of auto, package, api; got "${value}"`);
+  }
+  return runner;
+}
+
+function readIntegerConfig(value, fallback, { name, min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const candidate = value ?? fallback;
+  const parsed = typeof candidate === 'number'
+    ? candidate
+    : typeof candidate === 'string' && /^\d+$/.test(candidate.trim())
+      ? Number(candidate)
+      : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(`gupy.${name} must be an integer from ${min} to ${max}; got ${JSON.stringify(candidate)}`);
+  }
+  return parsed;
+}
+
+function readStringList(value, fallback, name) {
+  const candidate = value ?? fallback;
+  if (!Array.isArray(candidate) || candidate.some(item => typeof item !== 'string')) {
+    throw new Error(`gupy.${name} must be a list of strings`);
+  }
+  return candidate.map(item => item.trim()).filter(Boolean);
+}
+
+function readOptionalString(value, name) {
+  if (value == null) return '';
+  if (typeof value !== 'string') throw new Error(`gupy.${name} must be a string`);
+  return value.trim();
+}
+
+function readApiUrl(value) {
+  const candidate = readOptionalString(value, 'api_url') || DEFAULT_API_URL;
+  let parsed;
+  try { parsed = new URL(candidate); } catch { throw new Error(`gupy.api_url is not a valid URL: ${candidate}`); }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('gupy.api_url must use http or https');
+  }
+  return parsed.href.replace(/\/+$/, '');
+}
+
+export function resolveSinceDays(args, configuredValue = 14) {
+  const parsed = parseSinceDays(args);
+  if (parsed.error) throw new Error(parsed.error);
+  if (parsed.days != null) return parsed.days;
+  const configured = readIntegerConfig(configuredValue, 14, { name: 'since_days' });
+  if (configured === 0) return 0;
+  const checked = parseSinceDays(['--since', String(configured)]);
+  if (checked.error) throw new Error(`gupy.since_days is invalid: ${checked.error}`);
+  return checked.days;
+}
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
-let portalsConfig = {};
-if (existsSync(PORTALS_PATH)) {
-  portalsConfig = yaml.load(readFileSync(PORTALS_PATH, 'utf-8')) || {};
+let portalsConfig;
+let startupConfig;
+try {
+  portalsConfig = existsSync(PORTALS_PATH)
+    ? (yaml.load(readFileSync(PORTALS_PATH, 'utf-8')) || {})
+    : {};
+  if (!portalsConfig || typeof portalsConfig !== 'object' || Array.isArray(portalsConfig)) {
+    throw new Error('portals.yml must contain a YAML mapping');
+  }
+  const gupyCfg = portalsConfig.gupy ?? {};
+  if (!gupyCfg || typeof gupyCfg !== 'object' || Array.isArray(gupyCfg)) {
+    throw new Error('gupy configuration must be a YAML mapping');
+  }
+
+  if (gupyCfg.searches != null && !Array.isArray(gupyCfg.searches)) {
+    throw new Error('gupy.searches must be a list');
+  }
+  const rawSearches = gupyCfg.searches || [];
+  const configuredKeywords = rawSearches.length > 0
+    ? rawSearches
+        .map(search => search && typeof search === 'object' ? search.keyword : '')
+        .filter(keyword => typeof keyword === 'string' && keyword.trim())
+        .map(keyword => keyword.trim())
+    : DEFAULT_KEYWORDS;
+  const keywords = CLI_KWS.length > 0 ? CLI_KWS : configuredKeywords;
+  if (keywords.length === 0) {
+    throw new Error('gupy.searches must contain at least one non-empty keyword');
+  }
+
+  startupConfig = {
+    repoPath: resolve(process.env.CAREER_OPS_GUPY_REPO || gupyCfg.repo_path || '../gupy-job-scrapper'),
+    apiUrl: readApiUrl(gupyCfg.api_url),
+    timeoutMs: readIntegerConfig(gupyCfg.timeout_ms, 180_000, { name: 'timeout_ms', min: 1 }),
+    sinceDays: resolveSinceDays(rawArgs, gupyCfg.since_days),
+    descriptionChars: readIntegerConfig(gupyCfg.description_chars, 4000, { name: 'description_chars', min: 1, max: 100_000 }),
+    maxNewPerRun: readIntegerConfig(gupyCfg.max_new_per_run, 20, { name: 'max_new_per_run' }),
+    maxPerCompany: readIntegerConfig(gupyCfg.max_per_company, 3, { name: 'max_per_company' }),
+    runner: validateRunner(CLI_RUNNER || gupyCfg.runner || 'auto'),
+    workplaceTypes: readStringList(gupyCfg.workplace_types, ['remote', 'hybrid'], 'workplace_types'),
+    jobTypes: readStringList(gupyCfg.job_types, ['vacancy_type_effective', 'vacancy_legal_entity'], 'job_types'),
+    country: readOptionalString(gupyCfg.country, 'country'),
+    state: readOptionalString(gupyCfg.state, 'state'),
+    excludeKeywords: readStringList(gupyCfg.exclude_keywords, [], 'exclude_keywords'),
+    requiredDescriptionKeywords: readStringList(gupyCfg.description_required_keywords, [], 'description_required_keywords'),
+    keywords,
+  };
+} catch (error) {
+  console.error(`ERROR: invalid Gupy scanner configuration: ${error.message}`);
+  process.exit(1);
 }
 
-const guyoCfg = portalsConfig.gupy || {};
-
-const REPO_PATH = resolve(
-  process.env.CAREER_OPS_GUPY_REPO || guyoCfg.repo_path || '../gupy-job-scrapper'
-);
-const API_URL        = guyoCfg.api_url      || DEFAULT_API_URL;
-const TIMEOUT_MS     = guyoCfg.timeout_ms   ?? 180_000;
-const SINCE_DAYS     = CLI_SINCE != null ? parseInt(CLI_SINCE, 10)
-                       : (guyoCfg.since_days ?? 14);
-const DESC_CHARS     = guyoCfg.description_chars ?? 4000;
-const MAX_NEW_PER_RUN = guyoCfg.max_new_per_run ?? 20;
-const MAX_PER_COMPANY = guyoCfg.max_per_company ?? 3;
-const RUNNER_CFG     = CLI_RUNNER || guyoCfg.runner || 'auto';
-const WORKPLACE_TYPES  = guyoCfg.workplace_types  || ['remote', 'hybrid'];
-const JOB_TYPES        = guyoCfg.job_types        || ['vacancy_type_effective', 'vacancy_legal_entity'];
-const COUNTRY          = guyoCfg.country          || '';
-const STATE            = guyoCfg.state            || '';
-const EXCLUDE_KWS      = guyoCfg.exclude_keywords             || [];
-const REQ_DESC_KWS     = guyoCfg.description_required_keywords || [];
-
-const RAW_SEARCHES  = guyoCfg.searches || [];
-const CFG_KEYWORDS  = RAW_SEARCHES.length > 0
-  ? RAW_SEARCHES.map(s => s.keyword).filter(Boolean)
-  : DEFAULT_KEYWORDS;
-const KEYWORDS = CLI_KWS.length > 0 ? CLI_KWS : CFG_KEYWORDS;
+const {
+  repoPath: REPO_PATH,
+  apiUrl: API_URL,
+  timeoutMs: TIMEOUT_MS,
+  sinceDays: SINCE_DAYS,
+  descriptionChars: DESC_CHARS,
+  maxNewPerRun: MAX_NEW_PER_RUN,
+  maxPerCompany: MAX_PER_COMPANY,
+  runner: RUNNER_CFG,
+  workplaceTypes: WORKPLACE_TYPES,
+  jobTypes: JOB_TYPES,
+  country: COUNTRY,
+  state: STATE,
+  excludeKeywords: EXCLUDE_KWS,
+  requiredDescriptionKeywords: REQ_DESC_KWS,
+  keywords: KEYWORDS,
+} = startupConfig;
 
 // Date threshold from since_days
 const sinceEpochMs = SINCE_DAYS > 0 ? Date.now() - SINCE_DAYS * 86_400_000 : null;
@@ -160,7 +285,10 @@ export function limitOffers(offers, { maxTotal = 20, maxPerCompany = 3 } = {}) {
   const companyCounts = new Map();
 
   for (const offer of sorted) {
-    const company = normalizeCompany(offer.company || '');
+    // Missing company labels must not collapse unrelated postings into one
+    // synthetic employer and exhaust the per-company allowance together.
+    const company = normalizeCompany(offer.company || '')
+      || `unknown:${normalizeUrlForDedup(offer.url || offer.title || String(selected.length))}`;
     const count = companyCounts.get(company) || 0;
     if (selected.length >= totalCap || count >= companyCap) {
       skipped.push(offer);
@@ -176,31 +304,44 @@ export function limitOffers(offers, { maxTotal = 20, maxPerCompany = 3 } = {}) {
 
 export function buildLocation(job) {
   const parts = [];
-  if ((job.workplace_types || []).length > 0) {
-    const label = job.workplace_types
-      .map(w => ({ remote: 'Remoto', hybrid: 'Híbrido', 'on-site': 'Presencial' }[w] || w))
+  const workplaceTypes = Array.isArray(job?.workplace_types) ? job.workplace_types : [];
+  if (workplaceTypes.length > 0) {
+    const label = workplaceTypes
+      .map(w => ({ remote: 'Remoto', hybrid: 'Híbrido', 'on-site': 'Presencial' }[w] || String(w)))
       .join('/');
     parts.push(label);
   }
-  if (job.city)    parts.push(job.city);
-  if (job.state)   parts.push(job.state);
-  if (job.country) parts.push(job.country);
+  if (job?.city)    parts.push(String(job.city));
+  if (job?.state)   parts.push(String(job.state));
+  if (job?.country) parts.push(String(job.country));
   return parts.join(', ');
 }
 
 export function normalizeGupyJob(job) {
-  const postedAt = job.published_date
-    ? new Date(job.published_date).getTime()
+  const source = job && typeof job === 'object' ? job : {};
+  const postedAt = source.published_date
+    ? new Date(source.published_date).getTime()
     : undefined;
   return {
-    url:      job.url,
-    company:  job.company,
-    title:    job.name,
-    location: buildLocation(job),
+    url:      typeof source.url === 'string' ? source.url.trim() : '',
+    company:  String(source.company || '').trim(),
+    title:    String(source.name || '').trim(),
+    location: buildLocation(source),
     source:   'gupy',
     postedAt: Number.isFinite(postedAt) ? postedAt : undefined,
-    description: job.description || '',
+    description: typeof source.description === 'string' ? source.description : '',
   };
+}
+
+export function isSafeGupyUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return parsed.protocol === 'https:' && (host === 'gupy.io' || host.endsWith('.gupy.io'));
+  } catch {
+    return false;
+  }
 }
 
 // ── Bridge request builder (exported for tests) ──────────────────────────────
@@ -219,7 +360,7 @@ export function buildBridgeRequest({ repoPath, keywords, sinceDays, cfg }) {
     state:                           cfg.state || '',
     country:                         cfg.country || '',
     job_types:                       cfg.job_types || [],
-    description_chars:               cfg.description_chars || 4000,
+    description_chars:               cfg.description_chars ?? 4000,
   };
 }
 
@@ -241,9 +382,17 @@ function spawnBridge(bridgeReq) {
     const child = spawn('python3', [BRIDGE_SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'] });
     const outChunks = [];
     const errChunks = [];
+    let settled = false;
+
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      fn(value);
+    };
 
     child.stdout.on('data', d => outChunks.push(d));
     child.stderr.on('data', d => errChunks.push(d));
+    child.stdin.on('error', (error) => settle(reject, error));
 
     // write request and close stdin so python's json.load() unblocks
     child.stdin.write(JSON.stringify(bridgeReq), 'utf8');
@@ -251,7 +400,7 @@ function spawnBridge(bridgeReq) {
 
     const timer = setTimeout(() => {
       child.kill('SIGTERM');
-      reject(new Error(`bridge timed out after ${TIMEOUT_MS}ms — increase timeout_ms in portals.yml gupy: block`));
+      settle(reject, new Error(`bridge timed out after ${TIMEOUT_MS}ms — increase timeout_ms in portals.yml gupy: block`));
     }, TIMEOUT_MS);
 
     child.on('close', (code) => {
@@ -262,17 +411,18 @@ function spawnBridge(bridgeReq) {
         let msg = `bridge exited ${code}`;
         try { const r = JSON.parse(stdout); if (r.error) msg = r.error; } catch {}
         if (stderr) msg += `\n  stderr: ${stderr.slice(0, 500)}`;
-        return reject(new Error(msg));
+        return settle(reject, new Error(msg));
       }
       let result;
       try { result = JSON.parse(stdout); } catch (e) {
-        return reject(new Error(`bridge output is not valid JSON: ${stdout.slice(0, 200)}`));
+        return settle(reject, new Error(`bridge output is not valid JSON: ${stdout.slice(0, 200)}`));
       }
-      if (!result.ok) return reject(new Error(result.error || 'bridge returned ok=false'));
-      resolve(result.jobs || []);
+      if (!result.ok) return settle(reject, new Error(result.error || 'bridge returned ok=false'));
+      if (!Array.isArray(result.jobs)) return settle(reject, new Error('bridge response jobs must be an array'));
+      settle(resolve, result.jobs);
     });
 
-    child.on('error', (e) => { clearTimeout(timer); reject(e); });
+    child.on('error', (e) => { clearTimeout(timer); settle(reject, e); });
   });
 }
 
@@ -323,25 +473,28 @@ async function runApi(bridgeReq) {
   // Trigger search
   const search = await apiPost('/api/searches/', { config: cfg.id });
   const searchId = search.id;
+  if (searchId == null) throw new Error('API search response did not include an id');
   if (DEBUG) console.error(`[debug] api search id: ${searchId}`);
 
-  // Poll status
-  for (let i = 0; i < API_POLL_MAX; i++) {
-    await new Promise(r => setTimeout(r, API_POLL_MS));
-    const status = await apiGet(`/api/searches/${searchId}/status/`);
-    const s = status.status || status;
-    if (DEBUG) console.error(`[debug] poll ${i + 1}: ${s}`);
-    if (s === 'completed' || s === 'error') break;
-  }
+  await waitForSearchCompletion(searchId);
 
   // Collect vacancies (handle both paginated DRF and plain array)
   const jobs = [];
   let url = `/api/vacancies/?search_id=${searchId}`;
+  const visitedPages = new Set();
   while (url) {
+    if (visitedPages.has(url)) throw new Error(`API pagination loop detected at ${url}`);
+    visitedPages.add(url);
     const page = await apiGet(url);
     const results = Array.isArray(page) ? page : (page.results || []);
+    if (!Array.isArray(results)) throw new Error('API vacancies response results must be an array');
     jobs.push(...results);
-    url = Array.isArray(page) ? null : (page.next ? new URL(page.next).pathname + '?' + new URL(page.next).search.slice(1) : null);
+    if (Array.isArray(page) || !page.next) {
+      url = null;
+    } else {
+      const next = new URL(page.next, `${API_URL}/`);
+      url = `${next.pathname}${next.search}`;
+    }
   }
 
   // Normalize to the same shape as the bridge response
@@ -360,18 +513,40 @@ async function runApi(bridgeReq) {
   }));
 }
 
+export async function waitForSearchCompletion(searchId, {
+  getStatus = id => apiGet(`/api/searches/${id}/status/`),
+  sleep = ms => new Promise(resolveSleep => setTimeout(resolveSleep, ms)),
+  pollMs = API_POLL_MS,
+  maxPolls = API_POLL_MAX,
+} = {}) {
+  for (let i = 0; i < maxPolls; i++) {
+    await sleep(pollMs);
+    const response = await getStatus(searchId);
+    const status = typeof response === 'string' ? response : response?.status;
+    if (DEBUG) console.error(`[debug] poll ${i + 1}: ${status || 'unknown'}`);
+    if (status === 'completed') return;
+    if (status === 'error') {
+      const detail = typeof response === 'object' && response?.error_message
+        ? `: ${response.error_message}`
+        : '';
+      throw new Error(`API search ${searchId} failed${detail}`);
+    }
+  }
+  throw new Error(`API search ${searchId} timed out after ${maxPolls} polls`);
+}
+
 // ── Runner: auto ──────────────────────────────────────────────────────────────
 
 async function probePackage() {
   try {
     const scrPkg = `${REPO_PATH}/packages/scraper/gupy_scraper`;
     if (!existsSync(BRIDGE_SCRIPT) || !existsSync(scrPkg)) return false;
-    const code = `
-import sys; sys.path.insert(0, '${REPO_PATH}/packages/scraper')
-from gupy_scraper import JobScraperService; print('ok')
-`;
+    const code = 'import sys; sys.path.insert(0, sys.argv[1]); '
+      + "from gupy_scraper import JobScraperService; print('ok')";
     return await new Promise((res) => {
-      const child = spawn('python3', ['-c', code], { stdio: ['ignore', 'pipe', 'ignore'] });
+      const child = spawn('python3', ['-c', code, `${REPO_PATH}/packages/scraper`], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
       let out = '';
       child.stdout.on('data', d => { out += d; });
       const timer = setTimeout(() => { child.kill(); res(false); }, 10_000);
@@ -388,17 +563,33 @@ async function probeApi() {
   } catch { return false; }
 }
 
-async function resolveRunner() {
-  if (RUNNER_CFG === 'package') return 'package';
-  if (RUNNER_CFG === 'api') return 'api';
-  // auto
-  if (await probePackage()) return 'package';
-  if (await probeApi()) return 'api';
-  throw new Error(
-    'auto runner: neither package nor api is available.\n' +
-    `  package: ensure python3 + requests and ${REPO_PATH}/packages/scraper exists\n` +
-    `  api:     run 'docker compose up' in ${REPO_PATH}`
-  );
+async function fetchJobs(bridgeReq) {
+  if (RUNNER_CFG === 'package') return { runner: 'package', jobs: await runPackage(bridgeReq) };
+  if (RUNNER_CFG === 'api') return { runner: 'api', jobs: await runApi(bridgeReq) };
+
+  const failures = [];
+  if (await probePackage()) {
+    try {
+      return { runner: 'package', jobs: await runPackage(bridgeReq) };
+    } catch (error) {
+      failures.push(`package: ${error.message}`);
+      if (DEBUG) console.error(`[debug] package runner failed; trying api: ${error.message}`);
+    }
+  } else {
+    failures.push(`package: unavailable (${REPO_PATH}/packages/scraper)`);
+  }
+
+  if (await probeApi()) {
+    try {
+      return { runner: 'api', jobs: await runApi(bridgeReq) };
+    } catch (error) {
+      failures.push(`api: ${error.message}`);
+    }
+  } else {
+    failures.push(`api: unavailable (${API_URL})`);
+  }
+
+  throw new Error(`auto runner failed:\n  ${failures.join('\n  ')}`);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -438,17 +629,15 @@ async function main() {
   let runnerUsed = RUNNER_CFG;
 
   try {
-    const runner = await resolveRunner();
-    runnerUsed = runner;
-    if (DEBUG && !JSON_OUT) console.log(`  runner resolved: ${runner}`);
-    rawJobs = runner === 'api'
-      ? await runApi(bridgeReq)
-      : await runPackage(bridgeReq);
+    const result = await fetchJobs(bridgeReq);
+    runnerUsed = result.runner;
+    rawJobs = result.jobs;
+    if (DEBUG && !JSON_OUT) console.log(`  runner resolved: ${runnerUsed}`);
   } catch (err) {
     const summary = {
       date, runner: runnerUsed, found: 0, added: 0,
       skipped_title: 0, skipped_location: 0, skipped_date: 0,
-      skipped_blacklist: 0, skipped_dup: 0,
+      skipped_blacklist: 0, skipped_dup: 0, skipped_invalid: 0,
       error: err.message,
     };
     if (JSON_OUT) { console.log(JSON.stringify(summary, null, 2)); process.exit(1); }
@@ -464,10 +653,14 @@ async function main() {
   const dateSkipped        = [];
   const blacklistSkipped   = [];
   const dupeSkipped        = [];
+  const invalidSkipped     = [];
 
   for (const job of rawJobs) {
     const offer = normalizeGupyJob(job);
-    if (!offer.url) continue;
+    if (!isSafeGupyUrl(offer.url) || !offer.title) {
+      invalidSkipped.push(offer);
+      continue;
+    }
 
     if (!checkTitle(offer.title)) {
       seen.add(normalizeUrlForDedup(offer.url));
@@ -510,12 +703,16 @@ async function main() {
   if (!DRY_RUN) {
     if (selectedOffers.length > 0)  await appendToPipeline(selectedOffers);
     if (selectedOffers.length > 0)  appendToScanHistory(selectedOffers, date, 'added');
-    if (capSkipped.length > 0)      appendToScanHistory(capSkipped,     date, 'skipped_limit');
+    // Do not persist cap-limited rows as seen. The cap protects one run's
+    // pipeline fan-out; persisting these rows would suppress them forever
+    // instead of letting the next scan advance to the next page of matches.
     if (titleSkipped.length > 0)    appendToScanHistory(titleSkipped,    date, 'skipped_title');
     if (locationSkipped.length > 0) appendToScanHistory(locationSkipped, date, 'skipped_location');
     if (dateSkipped.length > 0)     appendToScanHistory(dateSkipped,     date, 'skipped_date');
     if (blacklistSkipped.length > 0) appendToScanHistory(blacklistSkipped, date, 'skipped_blacklist');
     if (dupeSkipped.length > 0)     appendToScanHistory(dupeSkipped,     date, 'skipped_dup');
+    const invalidRowsWithUrls = invalidSkipped.filter(offer => offer.url);
+    if (invalidRowsWithUrls.length > 0) appendToScanHistory(invalidRowsWithUrls, date, 'skipped_invalid_url');
 
     appendScanRunSummary({
       timestamp:              new Date().toISOString(),
@@ -528,7 +725,7 @@ async function main() {
       filteredLocation:       locationSkipped.length,
       filteredPostingAge:     dateSkipped.length,
       filteredSalary:         0,
-      filteredContent:        capSkipped.length,
+      filteredContent:        capSkipped.length + invalidSkipped.length,
       filteredCooldown:       0,
       dupes:                  dupeSkipped.length,
       newAdded:               selectedOffers.length,
@@ -551,6 +748,7 @@ async function main() {
       skipped_date:      dateSkipped.length,
       skipped_blacklist: blacklistSkipped.length,
       skipped_dup:       dupeSkipped.length,
+      skipped_invalid:   invalidSkipped.length,
       skipped_limit:     capSkipped.length,
       dry_run:           DRY_RUN,
       offers:            selectedOffers,
@@ -565,6 +763,7 @@ async function main() {
   console.log(`Filtered by date:    ${dateSkipped.length}`);
   console.log(`Filtered blacklist:  ${blacklistSkipped.length}`);
   console.log(`Duplicates:          ${dupeSkipped.length}`);
+  console.log(`Invalid rows/URLs:   ${invalidSkipped.length}`);
   console.log(`Limited out:         ${capSkipped.length}`);
   console.log(`New offers:          ${selectedOffers.length}`);
 

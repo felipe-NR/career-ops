@@ -39,6 +39,18 @@ logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 log = logging.getLogger(__name__)
 
 
+def fail(message: str) -> None:
+    print(json.dumps({"ok": False, "error": message}))
+    raise SystemExit(1)
+
+
+def string_list(req: dict, key: str) -> list:
+    value = req.get(key) or []
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        fail(f"{key} must be a list of strings")
+    return [item.strip() for item in value if item.strip()]
+
+
 def strip_html(text: str) -> str:
     text = html.unescape(text or "")
     text = re.sub(r"<[^>]+>", " ", text)
@@ -67,65 +79,73 @@ def main():
     try:
         req = json.load(sys.stdin)
     except json.JSONDecodeError as exc:
-        out = {"ok": False, "error": f"invalid JSON on stdin: {exc}"}
-        print(json.dumps(out))
-        sys.exit(1)
+        fail(f"invalid JSON on stdin: {exc}")
+
+    if not isinstance(req, dict):
+        fail("request must be a JSON object")
 
     repo_path = req.get("repo_path", "")
-    if not repo_path:
-        out = {"ok": False, "error": "repo_path is required"}
-        print(json.dumps(out))
-        sys.exit(1)
+    if not isinstance(repo_path, str) or not repo_path.strip():
+        fail("repo_path is required and must be a string")
 
     scraper_pkg = Path(repo_path) / "packages" / "scraper"
     if not scraper_pkg.exists():
-        out = {"ok": False, "error": f"gupy_scraper package not found at {scraper_pkg}"}
-        print(json.dumps(out))
-        sys.exit(1)
+        fail(f"gupy_scraper package not found at {scraper_pkg}")
 
     sys.path.insert(0, str(scraper_pkg))
 
     try:
         from gupy_scraper import JobScraperService
     except ImportError as exc:
-        out = {"ok": False, "error": f"cannot import gupy_scraper: {exc}"}
-        print(json.dumps(out))
-        sys.exit(1)
+        fail(f"cannot import gupy_scraper: {exc}")
 
-    keywords = req.get("keywords") or []
+    keywords = string_list(req, "keywords")
     if not keywords:
-        out = {"ok": False, "error": "keywords list is required and must not be empty"}
-        print(json.dumps(out))
-        sys.exit(1)
+        fail("keywords list is required and must not be empty")
 
     date_start_raw = req.get("date_start")
     date_start = None
     if date_start_raw:
         try:
             date_start = datetime.fromisoformat(date_start_raw).replace(tzinfo=timezone.utc)
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             log.warning("ignoring invalid date_start %r: %s", date_start_raw, exc)
 
-    description_chars = int(req.get("description_chars") or 4000)
+    try:
+        description_chars = int(req.get("description_chars") or 4000)
+    except (TypeError, ValueError):
+        fail("description_chars must be a positive integer")
+    if description_chars <= 0 or description_chars > 100_000:
+        fail("description_chars must be between 1 and 100000")
 
     try:
+        state = req.get("state") or None
+        country = req.get("country") or None
+        if state is not None and not isinstance(state, str):
+            fail("state must be a string")
+        if country is not None and not isinstance(country, str):
+            fail("country must be a string")
         svc = JobScraperService(
             date_start=date_start,
-            description_required_keywords=req.get("description_required_keywords") or [],
-            workplace_types=req.get("workplace_types") or [],
-            exclude_keywords=req.get("exclude_keywords") or [],
-            state=req.get("state") or None,
-            country=req.get("country") or None,
-            job_types=req.get("job_types") or [],
+            description_required_keywords=string_list(req, "description_required_keywords"),
+            workplace_types=string_list(req, "workplace_types"),
+            exclude_keywords=string_list(req, "exclude_keywords"),
+            state=state,
+            country=country,
+            job_types=string_list(req, "job_types"),
         )
         vacancies, stats = svc.search_jobs(keywords)
     except Exception as exc:
-        out = {"ok": False, "error": f"JobScraperService error: {exc}"}
-        print(json.dumps(out))
-        sys.exit(1)
+        fail(f"JobScraperService error: {exc}")
+
+    if not isinstance(vacancies, list):
+        fail("JobScraperService returned a non-list vacancies value")
 
     jobs = []
     for v in vacancies:
+        if not isinstance(v, dict):
+            log.warning("ignoring non-object vacancy: %r", v)
+            continue
         raw_desc = v.get("description") or ""
         clean_desc = truncate_stable(strip_html(raw_desc), description_chars)
         jobs.append({
@@ -137,7 +157,7 @@ def main():
             "city": str(v.get("city") or ""),
             "state": str(v.get("state") or ""),
             "country": str(v.get("country") or ""),
-            "workplace_types": list(v.get("workplace_types") or []),
+            "workplace_types": v.get("workplace_types") if isinstance(v.get("workplace_types"), list) else [],
             "published_date": to_iso(v.get("published_date")),
             "description": clean_desc,
         })
@@ -151,7 +171,11 @@ def main():
         "ok": True,
         "engine": engine_version,
         "count": len(jobs),
-        "stats": {k: v for k, v in (stats or {}).items() if isinstance(v, (int, float, str, bool, type(None)))},
+        "stats": {
+            k: v
+            for k, v in (stats.items() if isinstance(stats, dict) else [])
+            if isinstance(v, (int, float, str, bool, type(None)))
+        },
         "jobs": jobs,
     }
     print(json.dumps(out, ensure_ascii=False))

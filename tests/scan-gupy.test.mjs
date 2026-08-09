@@ -5,15 +5,88 @@ import { pathToFileURL } from 'url';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { readFileSync } from 'fs';
+import { spawnSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
 console.log('\nscan-gupy — pure-function unit tests');
 
-const { buildLocation, normalizeGupyJob, buildBridgeRequest, limitOffers } = await import(
+const {
+  buildLocation,
+  normalizeGupyJob,
+  isSafeGupyUrl,
+  buildBridgeRequest,
+  limitOffers,
+  resolveSinceDays,
+  validateCliArgs,
+  validateRunner,
+  waitForSearchCompletion,
+} = await import(
   pathToFileURL(join(ROOT, 'scan-gupy.mjs')).href
 );
+
+// ── CLI/config validation ──────────────────────────────────────────────────
+
+{
+  try {
+    validateCliArgs(['--keyword', 'Backend', '--since=7', '--runner', 'api']);
+    pass('validateCliArgs: accepts repeatable/value options in supported forms');
+  } catch (error) { fail(`validateCliArgs: valid arguments threw: ${error.message}`); }
+}
+
+{
+  const bridge = spawnSync('python3', [join(ROOT, 'scripts', 'gupy-bridge.py')], {
+    input: '[]',
+    encoding: 'utf8',
+  });
+  let payload = null;
+  try { payload = JSON.parse(bridge.stdout); } catch { /* assertion below reports it */ }
+  if (bridge.status === 1 && payload?.ok === false && /JSON object/.test(payload.error)) {
+    pass('gupy bridge: malformed request fails with JSON-only stdout');
+  } else {
+    fail(`gupy bridge: malformed-request contract mismatch: ${JSON.stringify({ status: bridge.status, stdout: bridge.stdout, stderr: bridge.stderr })}`);
+  }
+}
+
+{
+  try {
+    validateCliArgs(['--runer', 'api']);
+    fail('validateCliArgs: unknown option must be rejected');
+  } catch (error) {
+    if (/unknown option/.test(error.message)) pass('validateCliArgs: unknown option is rejected');
+    else fail(`validateCliArgs: unexpected error: ${error.message}`);
+  }
+}
+
+{
+  try {
+    const days = resolveSinceDays(['--since', '7'], 14);
+    if (days === 7) pass('resolveSinceDays: CLI value overrides configuration');
+    else fail(`resolveSinceDays: expected 7, got ${days}`);
+  } catch (error) { fail(`resolveSinceDays: valid value threw: ${error.message}`); }
+}
+
+{
+  try {
+    resolveSinceDays(['--since', 'not-a-number'], 14);
+    fail('resolveSinceDays: malformed CLI value must fail closed');
+  } catch (error) {
+    if (/positive number/.test(error.message)) pass('resolveSinceDays: malformed CLI value fails closed');
+    else fail(`resolveSinceDays: unexpected error: ${error.message}`);
+  }
+}
+
+{
+  try {
+    validateRunner('typo');
+    fail('validateRunner: unknown runner must be rejected');
+  } catch (error) {
+    if (/auto, package, api/.test(error.message)) pass('validateRunner: unknown runner is rejected');
+    else fail(`validateRunner: unexpected error: ${error.message}`);
+  }
+}
 
 // ── pipeline fan-out limits ─────────────────────────────────────────────────
 
@@ -30,6 +103,25 @@ const { buildLocation, normalizeGupyJob, buildBridgeRequest, limitOffers } = awa
   } else {
     fail(`limitOffers: unexpected selection ${selected.map(o => o.title).join(',')}`);
   }
+}
+
+{
+  const source = readFileSync(join(ROOT, 'scan-gupy.mjs'), 'utf8');
+  if (!/appendToScanHistory\(capSkipped/.test(source)) {
+    pass('run cap is non-destructive: limited offers remain eligible next scan');
+  } else {
+    fail('run cap persists limited offers as seen and can suppress them forever');
+  }
+}
+
+{
+  const offers = [
+    { company: '', title: 'One', url: 'https://one.gupy.io/jobs/1', postedAt: 2 },
+    { company: '', title: 'Two', url: 'https://two.gupy.io/jobs/2', postedAt: 1 },
+  ];
+  const { selected } = limitOffers(offers, { maxTotal: 2, maxPerCompany: 1 });
+  if (selected.length === 2) pass('limitOffers: missing company names do not share one company cap');
+  else fail(`limitOffers: unrelated unknown companies collapsed to ${selected.length} result(s)`);
 }
 
 // ── buildLocation ────────────────────────────────────────────────────────────
@@ -65,6 +157,12 @@ const { buildLocation, normalizeGupyJob, buildBridgeRequest, limitOffers } = awa
   const loc = buildLocation({ workplace_types: ['on-site'], city: 'RJ', state: 'RJ', country: 'Brasil' });
   if (loc === 'Presencial, RJ, RJ, Brasil') pass('buildLocation: on-site maps to Presencial');
   else fail(`buildLocation: on-site → "${loc}"`);
+}
+
+{
+  const loc = buildLocation({ workplace_types: 'remote', city: 'Recife' });
+  if (loc === 'Recife') pass('buildLocation: malformed workplace_types degrades safely');
+  else fail(`buildLocation: malformed workplace_types → "${loc}"`);
 }
 
 // ── normalizeGupyJob ─────────────────────────────────────────────────────────
@@ -121,6 +219,27 @@ const { buildLocation, normalizeGupyJob, buildBridgeRequest, limitOffers } = awa
   else fail(`normalizeGupyJob: empty location → "${offer.location}"`);
 }
 
+{
+  const offer = normalizeGupyJob(null);
+  if (offer.url === '' && offer.company === '' && offer.title === '' && offer.location === '') {
+    pass('normalizeGupyJob: non-object bridge row degrades safely');
+  } else {
+    fail(`normalizeGupyJob: non-object row → ${JSON.stringify(offer)}`);
+  }
+}
+
+{
+  const accepted = isSafeGupyUrl('https://acme.gupy.io/jobs/123');
+  const rejected = [
+    'http://acme.gupy.io/jobs/123',
+    'https://gupy.io.example.com/jobs/123',
+    'javascript:alert(1)',
+    'not a url',
+  ].every(value => !isSafeGupyUrl(value));
+  if (accepted && rejected) pass('isSafeGupyUrl: allows only HTTPS gupy.io hosts');
+  else fail('isSafeGupyUrl: URL allowlist mismatch');
+}
+
 // ── buildBridgeRequest ───────────────────────────────────────────────────────
 
 {
@@ -146,6 +265,49 @@ const { buildLocation, normalizeGupyJob, buildBridgeRequest, limitOffers } = awa
   else fail(`buildBridgeRequest: date_start → "${req.date_start}"`);
   if (req.description_chars === 4000) pass('buildBridgeRequest: description_chars passthrough');
   else fail(`buildBridgeRequest: description_chars → ${req.description_chars}`);
+}
+
+
+// ── API search lifecycle ────────────────────────────────────────────────────
+
+{
+  const statuses = [{ status: 'running' }, { status: 'completed' }];
+  try {
+    await waitForSearchCompletion(12, {
+      getStatus: async () => statuses.shift(),
+      sleep: async () => {},
+      maxPolls: 2,
+    });
+    pass('waitForSearchCompletion: returns only after completed status');
+  } catch (error) { fail(`waitForSearchCompletion: completed search threw: ${error.message}`); }
+}
+
+{
+  try {
+    await waitForSearchCompletion(13, {
+      getStatus: async () => ({ status: 'error', error_message: 'scraper failed' }),
+      sleep: async () => {},
+      maxPolls: 1,
+    });
+    fail('waitForSearchCompletion: API error status must reject');
+  } catch (error) {
+    if (/scraper failed/.test(error.message)) pass('waitForSearchCompletion: API error preserves detail');
+    else fail(`waitForSearchCompletion: unexpected API error: ${error.message}`);
+  }
+}
+
+{
+  try {
+    await waitForSearchCompletion(14, {
+      getStatus: async () => ({ status: 'running' }),
+      sleep: async () => {},
+      maxPolls: 2,
+    });
+    fail('waitForSearchCompletion: polling exhaustion must reject');
+  } catch (error) {
+    if (/timed out after 2 polls/.test(error.message)) pass('waitForSearchCompletion: polling exhaustion is explicit');
+    else fail(`waitForSearchCompletion: unexpected timeout error: ${error.message}`);
+  }
 }
 
 {

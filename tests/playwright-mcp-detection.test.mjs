@@ -489,6 +489,32 @@ try {
     }
   }
 
+  // 21. A configured but explicitly disabled server is not operational and
+  //     must not suppress the setup warning.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'co-mcp-21-'));
+    const codexHome = mkdtempSync(join(tmpdir(), 'co-codex-home-21-'));
+    try {
+      writeFileSync(join(codexHome, 'config.toml'), [
+        '[mcp_servers.playwright]',
+        'command = "npx"',
+        'args = ["@playwright/mcp@latest"]',
+        'enabled = false',
+        '',
+      ].join('\n'));
+      const state = runDoctor(dir, ['--cli', 'codex'], { CODEX_HOME: codexHome });
+      if (state.playwright_mcp?.codex === false
+          && state.warnings.some((warning) => PLAYWRIGHT_RE.test(warning))) {
+        pass('disabled Codex Playwright MCP server remains unconfigured');
+      } else {
+        fail(`#21 unexpected state: ${JSON.stringify(state)}`);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(codexHome, { recursive: true, force: true });
+    }
+  }
+
 } catch (e) {
   fail(`opencode-mcp-detection tests crashed: ${e.message}`);
 }

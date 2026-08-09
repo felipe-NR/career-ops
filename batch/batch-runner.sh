@@ -65,6 +65,15 @@ is_decimal_number() {
   [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]
 }
 
+require_option_value() {
+  local option="$1"
+  local value="${2:-}"
+  if [[ -z "$value" || "$value" == --* ]]; then
+    echo "ERROR: $option requires an argument"
+    exit 1
+  fi
+}
+
 usage() {
   cat <<'USAGE'
 career-ops batch runner — process job offers in batch via Claude Code or Codex.
@@ -77,7 +86,7 @@ Options:
   --cli NAME           Worker CLI: claude or codex (default: CAREER_OPS_CLI or claude)
   --dry-run            Show what would be processed, don't execute
   --retry-failed       Only retry offers marked as "failed" in state
-  --resume-paused      Resume offers paused by a Claude session/rate limit
+  --resume-paused      Resume offers paused by a worker session/rate limit
   --start-from N       Start from offer ID N (skip earlier IDs)
   --limit N            Max number of offers to process in this run
   --max-retries N      Max retry attempts per offer (default: 2)
@@ -116,28 +125,43 @@ USAGE
 # Parse arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --parallel) PARALLEL="$2"; shift 2 ;;
-    --cli) WORKER_CLI="$2"; shift 2 ;;
+    --parallel) require_option_value "$@"; PARALLEL="$2"; shift 2 ;;
+    --cli) require_option_value "$@"; WORKER_CLI="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     --retry-failed) RETRY_FAILED=true; shift ;;
     --resume-paused) RESUME_PAUSED=true; shift ;;
-    --start-from) START_FROM="$2"; shift 2 ;;
-    --limit) LIMIT="$2"; shift 2 ;;
-    --max-retries) MAX_RETRIES="$2"; shift 2 ;;
-    --min-score) MIN_SCORE="$2"; shift 2 ;;
+    --start-from) require_option_value "$@"; START_FROM="$2"; shift 2 ;;
+    --limit) require_option_value "$@"; LIMIT="$2"; shift 2 ;;
+    --max-retries) require_option_value "$@"; MAX_RETRIES="$2"; shift 2 ;;
+    --min-score) require_option_value "$@"; MIN_SCORE="$2"; shift 2 ;;
     --skip-pdf) SKIP_PDF=true; shift ;;
     --rate-limit-sleep)
-      [[ $# -ge 2 ]] || { echo "ERROR: --rate-limit-sleep requires an argument"; exit 1; }
+      require_option_value "$@"
       RATE_LIMIT_SLEEP="$2"
       shift 2
       ;;
-    --model) MODEL="$2"; shift 2 ;;
+    --model) require_option_value "$@"; MODEL="$2"; shift 2 ;;
     --status) STATUS_ONLY=true; shift ;;
     --watch) WATCH_MODE=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1"; usage; exit 1 ;;
   esac
 done
+
+if ! [[ "$PARALLEL" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --parallel must be a positive integer."
+  exit 1
+fi
+
+if ! [[ "$START_FROM" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --start-from must be a non-negative integer."
+  exit 1
+fi
+
+if ! [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --max-retries must be a non-negative integer."
+  exit 1
+fi
 
 if ! [[ "$RATE_LIMIT_SLEEP" =~ ^[0-9]+$ ]]; then
   echo "ERROR: --rate-limit-sleep must be a non-negative integer (seconds)."
@@ -583,7 +607,17 @@ process_offer() {
     worker_args+=(--append-system-prompt-file "$resolved_prompt" "$prompt")
   else
     printf '\n\n## Orchestrator task\n\n%s\n' "$prompt" >> "$resolved_prompt"
-    worker_args=(exec --cd "$PROJECT_DIR" --sandbox danger-full-access --dangerously-bypass-approvals-and-sandbox --ephemeral)
+    # Keep unattended workers inside the project while allowing JD retrieval.
+    # The empty MCP table mirrors Claude's --strict-mcp-config isolation so
+    # parallel workers cannot contend for a shared browser server.
+    worker_args=(
+      exec --cd "$PROJECT_DIR"
+      --sandbox workspace-write
+      -c 'approval_policy="never"'
+      -c 'sandbox_workspace_write.network_access=true'
+      -c 'mcp_servers={}'
+      --ephemeral
+    )
     if [[ -n "$RESOLVED_MODEL" ]]; then
       worker_args+=(--model "$RESOLVED_MODEL")
     fi

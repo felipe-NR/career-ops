@@ -10216,6 +10216,16 @@ try {
 console.log('\n15. Batch runner MCP isolation');
 
 try {
+  const workspaceMcp = JSON.parse(readFileSync(join(ROOT, '.mcp.json'), 'utf8'));
+  const playwrightArgs = workspaceMcp?.mcpServers?.playwright?.args;
+  if (Array.isArray(playwrightArgs)
+      && playwrightArgs.includes('-y')
+      && playwrightArgs.some(arg => /^@playwright\/mcp@\d+\.\d+\.\d+$/.test(arg))) {
+    pass('workspace Playwright MCP is non-interactive and version-pinned');
+  } else {
+    fail('workspace Playwright MCP must use npx -y with an exact package version');
+  }
+
   const batchRunner = readFileSync(join(ROOT, 'batch', 'batch-runner.sh'), 'utf-8');
   // Workers must be spawned with --strict-mcp-config so they don't inherit the
   // parent session's MCP servers (e.g. Playwright) and deadlock fighting over a
@@ -10223,13 +10233,36 @@ try {
   const claudeArgsLine = batchRunner
     .split('\n')
     .find(l => l.includes('worker_args=(-p'));
-  if (claudeArgsLine && claudeArgsLine.includes('--strict-mcp-config') && /WORKER_CLI.*codex/.test(batchRunner) && /codex "\$\{worker_args\[@\]\}"/.test(batchRunner)) {
+  if (claudeArgsLine
+      && claudeArgsLine.includes('--strict-mcp-config')
+      && /WORKER_CLI.*codex/.test(batchRunner)
+      && /codex "\$\{worker_args\[@\]\}"/.test(batchRunner)
+      && /--sandbox workspace-write/.test(batchRunner)
+      && /approval_policy=\\?"never\\?"/.test(batchRunner)
+      && /mcp_servers=\{\}/.test(batchRunner)
+      && !/--dangerously-bypass-approvals-and-sandbox/.test(batchRunner)) {
     pass('batch workers spawn with --strict-mcp-config (no inherited MCP)');
   } else {
-    fail('batch-runner.sh worker spawn is missing Claude MCP isolation or Codex CLI routing');
+    fail('batch-runner.sh worker spawn is missing MCP isolation, Codex routing, or has conflicting sandbox flags');
   }
 } catch (e) {
   fail(`Batch runner MCP isolation test crashed: ${e.message}`);
+}
+
+try {
+  const runner = join(ROOT, 'batch', 'batch-runner.sh');
+  const missingValue = spawnSync(getBash(), [runner, '--cli'], { encoding: 'utf-8' });
+  const invalidParallel = spawnSync(getBash(), [runner, '--parallel', 'zero'], { encoding: 'utf-8' });
+  if (missingValue.status !== 0
+      && /--cli requires an argument/.test(`${missingValue.stdout}${missingValue.stderr}`)
+      && invalidParallel.status !== 0
+      && /--parallel must be a positive integer/.test(`${invalidParallel.stdout}${invalidParallel.stderr}`)) {
+    pass('batch runner rejects missing option values and invalid concurrency before execution');
+  } else {
+    fail(`batch runner argument validation mismatch: cli=${missingValue.status}, parallel=${invalidParallel.status}`);
+  }
+} catch (e) {
+  fail(`Batch runner argument validation test crashed: ${e.message}`);
 }
 
 // ── 16. UPDATE-SYSTEM SEMVER PARSING (#923) ─────────────────────

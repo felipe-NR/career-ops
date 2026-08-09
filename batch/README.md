@@ -6,6 +6,8 @@ To make Codex the persistent default for this workspace, add `CAREER_OPS_CLI=cod
 
 Codex workers use the Codex CLI's configured default model unless `--model` is
 provided explicitly. An explicit `--model` override always takes precedence.
+They run unattended in the workspace-write sandbox, with network access for JD
+retrieval and MCP servers disabled to keep parallel workers isolated.
 
 ## Quick Start
 
@@ -26,7 +28,7 @@ provided explicitly. An explicit `--model` override always takes precedence.
 3. **Run the batch**:
 
    ```bash
-./batch/batch-runner.sh --cli codex
+   ./batch/batch-runner.sh --cli codex
    ```
 
 4. **Results** are automatically merged into `data/applications.md`, processed offers are reconciled out of the `data/pipeline.md` inbox, and integrity is verified with `verify-pipeline.mjs` at the end of the run.
@@ -39,7 +41,7 @@ provided explicitly. An explicit `--model` override always takes precedence.
 | `--cli NAME` | `CAREER_OPS_CLI` or `claude` | Worker CLI: `claude` or `codex` |
 | `--dry-run` | off | Preview pending offers without processing |
 | `--retry-failed` | off | Only retry offers marked as `failed` in state |
-| `--resume-paused` | off | Resume offers paused after a Claude session/rate limit |
+| `--resume-paused` | off | Resume offers paused after a worker session/rate limit |
 | `--start-from N` | `0` | Skip offers with ID below N |
 | `--limit N` | `0` | Max number of offers to process in this run (0 = no limit) |
 | `--max-retries N` | `2` | Max retry attempts per offer before giving up |

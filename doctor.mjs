@@ -120,6 +120,7 @@ const MCP_CONFIGS = [
 // Server qualifies if its definition references the @playwright/mcp package.
 function isPlaywrightServer(server) {
   if (!server || typeof server !== 'object') return false;
+  if (server.enabled === false) return false;
   const blob = JSON.stringify(server).toLowerCase();
   return blob.includes('@playwright/mcp');
 }
@@ -151,7 +152,10 @@ function parseTomlMcpServers(source) {
     }
     if (!current) continue;
     const kv = line.match(/^([A-Za-z0-9_-]+)\s*=\s*(.+)$/);
-    if (kv) servers[current][kv[1]] = kv[2];
+    if (kv) {
+      const value = kv[2].trim();
+      servers[current][kv[1]] = value === 'true' ? true : value === 'false' ? false : value;
+    }
   }
   return { mcp_servers: servers };
 }
