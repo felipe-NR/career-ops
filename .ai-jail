@@ -1,0 +1,8 @@
+# ai-jail sandbox configuration
+# https://github.com/akitaonrails/ai-jail
+# Edit freely. Regenerate with: ai-jail --clean --init
+
+command = [
+    "claude",
+    "--dangerously-skip-permissions",
+]
