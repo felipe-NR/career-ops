@@ -1,6 +1,8 @@
 # Batch Processing
 
-Process multiple job offers in parallel via headless workers. Each worker runs the full evaluation pipeline (A-F report + PDF + tracker line) autonomously. See the **Headless / Batch Mode** table in `AGENTS.md` for the correct command per CLI.
+Process multiple job offers in parallel via headless workers. Each worker runs the full evaluation pipeline (A-G report + PDF + tracker line) autonomously. The runner supports Claude Code and Codex; select one with `--cli` or `CAREER_OPS_CLI`.
+
+To make Codex the persistent default for this workspace, add `CAREER_OPS_CLI=codex` to `.env`. For a single run, use `--cli codex` instead.
 
 ## Quick Start
 
@@ -21,7 +23,7 @@ Process multiple job offers in parallel via headless workers. Each worker runs t
 3. **Run the batch**:
 
    ```bash
-   ./batch/batch-runner.sh
+./batch/batch-runner.sh --cli codex
    ```
 
 4. **Results** are automatically merged into `data/applications.md`, processed offers are reconciled out of the `data/pipeline.md` inbox, and integrity is verified with `verify-pipeline.mjs` at the end of the run.
@@ -31,6 +33,7 @@ Process multiple job offers in parallel via headless workers. Each worker runs t
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--parallel N` | `1` | Number of concurrent headless workers |
+| `--cli NAME` | `CAREER_OPS_CLI` or `claude` | Worker CLI: `claude` or `codex` |
 | `--dry-run` | off | Preview pending offers without processing |
 | `--retry-failed` | off | Only retry offers marked as `failed` in state |
 | `--resume-paused` | off | Resume offers paused after a Claude session/rate limit |
@@ -55,7 +58,7 @@ batch/
 ## How It Works
 
 1. **batch-runner.sh** reads `batch-input.tsv` and `batch-state.tsv` to determine which offers need processing.
-2. For each pending offer, it assigns a report number and launches a headless worker with `batch-prompt.md` as the system prompt (placeholders like `{{URL}}`, `{{REPORT_NUM}}` are resolved).
+2. For each pending offer, it assigns a report number and launches a Claude Code or Codex worker with `batch-prompt.md` as the instructions (placeholders like `{{URL}}`, `{{REPORT_NUM}}` are resolved).
 3. Each worker evaluates the offer, writes a report to `reports/`, generates a PDF to `output/`, and writes a tracker TSV to `tracker-additions/`.
 4. After all workers finish, batch-runner calls `merge-tracker.mjs` to merge TSVs into `data/applications.md`, `reconcile-pipeline.mjs` to move processed offers out of the `data/pipeline.md` inbox, and `verify-pipeline.mjs` to check integrity.
 
@@ -80,7 +83,7 @@ Batch mode reads offers from `batch-input.tsv`, but the `data/pipeline.md` inbox
 
 `batch-state.tsv` tracks the status of every offer (`pending`, `processing`, `completed`, `failed`, `skipped`, `rate_limited`, `paused_rate_limit`). If the batch is interrupted, re-running `batch-runner.sh` picks up where it left off -- completed offers are skipped automatically. `rate_limited` is a non-completed state used while the runner waits before retrying, so interrupted rate-limited jobs are eligible on the next normal run.
 
-`paused_rate_limit` is different: it means a worker hit a Claude session/usage limit, so the runner stopped scheduling new offers and preserved the retry count. Resume those rows explicitly after the limit resets:
+`paused_rate_limit` is different: it means the selected worker hit a session or usage limit, so the runner stopped scheduling new offers and preserved the retry count. Resume those rows explicitly after the limit resets:
 
 ```bash
 ./batch/batch-runner.sh --resume-paused
@@ -90,6 +93,6 @@ A PID-based lock file (`batch-runner.pid`) prevents concurrent batch runs. If a 
 
 ## Prerequisites
 
-- Your CLI in PATH (see **Headless / Batch Mode** table in `AGENTS.md`)
+- `claude` or `codex` in PATH (select with `--cli` or `CAREER_OPS_CLI`)
 - Node.js >= 18, Playwright chromium installed (`npm run doctor` to verify)
 - `batch-input.tsv` with at least one offer

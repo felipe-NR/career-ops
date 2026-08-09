@@ -7,6 +7,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
+import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import yaml from 'js-yaml';
 import dotenv from 'dotenv';
@@ -109,6 +110,7 @@ async function checkPlaywright() {
 // Per-CLI MCP config registry.
 const MCP_CONFIGS = [
   { cli: 'claude',   files: ['.mcp.json', '.claude/settings.json', '.claude/settings.local.json'] },
+  { cli: 'codex',    files: ['.codex/config.toml', '$CODEX_HOME/config.toml', '~/.codex/config.toml'] },
   // opencode.jsonc is JSONC: OpenCode accepts comments and trailing commas
   // there, and JSON.parse throwing on them used to read as "no MCP server
   // configured" (#2252).
@@ -122,15 +124,52 @@ function isPlaywrightServer(server) {
   return blob.includes('@playwright/mcp');
 }
 
+function resolveMcpConfigPath(root, rel) {
+  const codexHome = process.env.CODEX_HOME || join(homedir(), '.codex');
+  if (rel.startsWith('$CODEX_HOME/')) {
+    return join(codexHome, rel.slice('$CODEX_HOME/'.length));
+  }
+  if (rel.startsWith('~/.codex/')) return join(codexHome, rel.slice('~/.codex/'.length));
+  if (rel.startsWith('~/')) return join(homedir(), rel.slice(2));
+  return join(root, ...rel.split('/'));
+}
+
+function parseTomlMcpServers(source) {
+  const servers = {};
+  let current = null;
+  for (const rawLine of String(source).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const header = line.match(/^\[mcp_servers\.([^\]]+)\]$/);
+    if (header) {
+      current = header[1].replace(/^["']|["']$/g, '');
+      servers[current] = {};
+      continue;
+    }
+    if (/^\[/.test(line)) {
+      current = null;
+      continue;
+    }
+    if (!current) continue;
+    const kv = line.match(/^([A-Za-z0-9_-]+)\s*=\s*(.+)$/);
+    if (kv) servers[current][kv[1]] = kv[2];
+  }
+  return { mcp_servers: servers };
+}
+
+function parseMcpConfig(file, source) {
+  if (/\.toml$/i.test(file)) return parseTomlMcpServers(source);
+  return parseConfigByExtension(file, source);
+}
+
 function isPlaywrightMcpConfigured(root, activeCli) {
   const entry = MCP_CONFIGS.find((c) => c.cli === activeCli);
   if (!entry) return false; // known CLI but no MCP file mapping; caller warns
   return entry.files.some((rel) => {
-    const file = join(root, ...rel.split('/'));
+    const file = resolveMcpConfigPath(root, rel);
     if (!existsSync(file)) return false;
     try {
-      const cfg = parseConfigByExtension(file, readFileSync(file, 'utf8')) ?? {};
-      const buckets = [cfg.mcpServers, cfg.mcp].filter((b) => b && typeof b === 'object');
+      const cfg = parseMcpConfig(file, readFileSync(file, 'utf8')) ?? {};
+      const buckets = [cfg.mcpServers, cfg.mcp, cfg.mcp_servers].filter((b) => b && typeof b === 'object');
       return buckets.some((servers) => Object.values(servers).some(isPlaywrightServer));
     } catch {
       // Malformed config — treat as unconfigured, keep silent (matches prior behavior).

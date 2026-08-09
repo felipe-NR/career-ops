@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# career-ops batch runner — standalone orchestrator for claude -p workers
-# Reads batch-input.tsv, delegates each offer to a claude -p worker,
+# career-ops batch runner — standalone orchestrator for headless CLI workers.
+# Reads batch-input.tsv, delegates each offer to the configured executor, and
 # tracks state in batch-state.tsv for resumability.
-#
-# NOTE: This script is Claude Code-specific. It uses claude -p with
-# --dangerously-skip-permissions and --append-system-prompt-file flags
-# that are not available in other CLIs. Multi-CLI support is out of scope
-# for now — contributions welcome.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -29,6 +24,22 @@ STATE_LOCK_PID_FILE="$STATE_LOCK_DIR/pid"
 STATE_LOCK_TIMEOUT_SECONDS=30
 MAIN_PID="${BASHPID:-$$}"
 
+read_env_worker_cli() {
+  local env_file="$PROJECT_DIR/.env"
+  [[ -f "$env_file" ]] || return 0
+
+  awk -F= '
+    /^[[:space:]]*CAREER_OPS_CLI[[:space:]]*=/ {
+      value = substr($0, index($0, "=") + 1)
+      sub(/[[:space:]]*#.*/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^"|"$|^\047|\047$/, "", value)
+      print value
+      exit
+    }
+  ' "$env_file"
+}
+
 # Defaults
 PARALLEL=1
 DRY_RUN=false
@@ -46,6 +57,8 @@ BATCH_PAUSED=false
 STATUS_ONLY=false
 WATCH_MODE=false
 LIMIT=0
+WORKER_CLI="${CAREER_OPS_CLI:-$(read_env_worker_cli)}"
+WORKER_CLI="${WORKER_CLI:-claude}"
 
 # Return success for non-negative integer or decimal strings.
 is_decimal_number() {
@@ -54,13 +67,14 @@ is_decimal_number() {
 
 usage() {
   cat <<'USAGE'
-career-ops batch runner — process job offers in batch via claude -p workers
-Uses spend_tier from config/profile.yml unless --model overrides it.
+career-ops batch runner — process job offers in batch via Claude Code or Codex.
+The executor comes from CAREER_OPS_CLI (default: claude) or --cli.
 
 Usage: batch-runner.sh [OPTIONS]
 
 Options:
   --parallel N         Number of parallel workers (default: 1)
+  --cli NAME           Worker CLI: claude or codex (default: CAREER_OPS_CLI or claude)
   --dry-run            Show what would be processed, don't execute
   --retry-failed       Only retry offers marked as "failed" in state
   --resume-paused      Resume offers paused by a Claude session/rate limit
@@ -71,9 +85,8 @@ Options:
   --skip-pdf           Skip PDF generation entirely (write ❌ in tracker PDF column)
   --rate-limit-sleep N Seconds to wait before retrying a rate-limited worker
                        (default: 300)
-  --model NAME         Override the tier-resolved Claude model passed to
-                       `claude -p --model` (otherwise uses config/profile.yml
-                       spend_tier: economy/standard/premium; default standard)
+  --model NAME         Override the worker model. Claude defaults to the
+                       spend_tier mapping; Codex uses its configured default.
   --status             Show batch progress and a per-job table, then exit
   --watch              Live-refresh progress until the run completes
   -h, --help           Show this help
@@ -104,6 +117,7 @@ USAGE
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --parallel) PARALLEL="$2"; shift 2 ;;
+    --cli) WORKER_CLI="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     --retry-failed) RETRY_FAILED=true; shift ;;
     --resume-paused) RESUME_PAUSED=true; shift ;;
@@ -178,8 +192,13 @@ check_prerequisites() {
     exit 1
   fi
 
-  if ! command -v claude &>/dev/null; then
-    echo "ERROR: 'claude' CLI not found in PATH."
+  if [[ "$WORKER_CLI" != "claude" && "$WORKER_CLI" != "codex" ]]; then
+    echo "ERROR: Unsupported worker CLI '$WORKER_CLI'. Use claude or codex."
+    exit 1
+  fi
+
+  if ! command -v "$WORKER_CLI" &>/dev/null; then
+    echo "ERROR: '$WORKER_CLI' CLI not found in PATH."
     exit 1
   fi
 
@@ -351,7 +370,7 @@ spend_tier_to_model() {
   esac
 }
 
-# Resolve the model to pass to `claude -p --model`. --model always wins.
+# Resolve the model to pass to the selected worker. --model always wins.
 resolve_worker_model() {
   if [[ -n "$MODEL" ]]; then
     RESOLVED_MODEL="$MODEL"
@@ -360,7 +379,9 @@ resolve_worker_model() {
   fi
 
   RESOLVED_SPEND_TIER="$(read_spend_tier)"
-  RESOLVED_MODEL="$(spend_tier_to_model "$RESOLVED_SPEND_TIER")"
+  if [[ "$WORKER_CLI" == "claude" ]]; then
+    RESOLVED_MODEL="$(spend_tier_to_model "$RESOLVED_SPEND_TIER")"
+  fi
 }
 
 # Append a one-line, auditable record of a pre-screen-gate discard to
@@ -550,18 +571,24 @@ process_offer() {
     fi
   done
 
-  # Launch claude -p worker.
-  # The model is resolved once per run from spend_tier unless --model was
-  # passed. Building the command in an array keeps quoting safe regardless.
-  # --strict-mcp-config (with no --mcp-config) starts workers with no MCP
-  # servers: they only evaluate offers and need none. Without it each parallel
-  # worker inherits the parent session's MCP (e.g. Playwright) and they deadlock
-  # fighting over the single shared browser when --parallel > 1 (issue #506).
-  local -a claude_args=(-p --dangerously-skip-permissions --strict-mcp-config)
-  if [[ -n "$RESOLVED_MODEL" ]]; then
-    claude_args+=(--model "$RESOLVED_MODEL")
+  # The two CLIs use different headless interfaces. Codex receives the fully
+  # resolved worker instructions over stdin; this preserves the same context
+  # that Claude receives through --append-system-prompt-file.
+  local -a worker_args=()
+  if [[ "$WORKER_CLI" == "claude" ]]; then
+    worker_args=(-p --dangerously-skip-permissions --strict-mcp-config)
+    if [[ -n "$RESOLVED_MODEL" ]]; then
+      worker_args+=(--model "$RESOLVED_MODEL")
+    fi
+    worker_args+=(--append-system-prompt-file "$resolved_prompt" "$prompt")
+  else
+    printf '\n\n## Orchestrator task\n\n%s\n' "$prompt" >> "$resolved_prompt"
+    worker_args=(exec --cd "$PROJECT_DIR" --sandbox danger-full-access --dangerously-bypass-approvals-and-sandbox --ephemeral)
+    if [[ -n "$RESOLVED_MODEL" ]]; then
+      worker_args+=(--model "$RESOLVED_MODEL")
+    fi
+    worker_args+=(-)
   fi
-  claude_args+=(--append-system-prompt-file "$resolved_prompt" "$prompt")
 
   local exit_code=0
   local terminal_failure_recorded=false
@@ -569,14 +596,18 @@ process_offer() {
   local max_shim_retries=4
   while true; do
     exit_code=0
-    claude "${claude_args[@]}" > "$log_file" 2>&1 || exit_code=$?
+    if [[ "$WORKER_CLI" == "codex" ]]; then
+      codex "${worker_args[@]}" < "$resolved_prompt" > "$log_file" 2>&1 || exit_code=$?
+    else
+      claude "${worker_args[@]}" > "$log_file" 2>&1 || exit_code=$?
+    fi
 
     if [[ $exit_code -eq 0 ]]; then
       break
     fi
 
-    # Check for Claude Code npm shim swap (exit code 127 + command not found)
-    if [[ $exit_code -eq 127 ]] && grep -qE "(claude: command not found|claude:.*not found|cannot find.*claude)" "$log_file" && (( shim_retries < max_shim_retries )); then
+    # Check for a transient Claude Code npm shim swap (exit code 127).
+    if [[ "$WORKER_CLI" == "claude" && $exit_code -eq 127 ]] && grep -qE "(claude: command not found|claude:.*not found|cannot find.*claude)" "$log_file" && (( shim_retries < max_shim_retries )); then
       shim_retries=$((shim_retries + 1))
       echo "    ⏳ Claude command not found (shim swap detected). Retrying in 30s (attempt $shim_retries/$max_shim_retries)..."
       sleep 30
@@ -935,6 +966,7 @@ main() {
   fi
 
   echo "=== career-ops batch runner ==="
+  echo "Worker CLI: $WORKER_CLI"
   if (( LIMIT > 0 )); then
     echo "Parallel: $PARALLEL | Max retries: $MAX_RETRIES | Limit: $LIMIT"
   else
@@ -942,6 +974,8 @@ main() {
   fi
   if [[ "$RESOLVED_SPEND_TIER" == "override" ]]; then
     echo "Model: $RESOLVED_MODEL (explicit --model override)"
+  elif [[ "$WORKER_CLI" == "codex" ]]; then
+    echo "Model: Codex configured default (spend_tier=${RESOLVED_SPEND_TIER})"
   else
     echo "Model: $RESOLVED_MODEL (spend_tier=${RESOLVED_SPEND_TIER})"
   fi

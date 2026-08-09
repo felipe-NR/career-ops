@@ -204,25 +204,29 @@ try {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
 
-  // 9. --cli codex → known CLI without MCP scanner; warn (case B).
-  //    active_cli is preserved verbatim ("codex"), cli_source='flag',
-  //    playwright_mcp is {} (not claude), and the "skipped for CLI: codex"
-  //    warning fires — distinct from case A (unknown CLI), which is silent.
+  // 9. --cli codex with isolated CODEX_HOME and no project config → warning.
+  //    The Codex scanner checks project .codex/config.toml and user-level
+  //    $CODEX_HOME/config.toml / ~/.codex/config.toml; CODEX_HOME isolates the
+  //    test from the real developer machine.
   {
     const dir = mkdtempSync(join(tmpdir(), 'co-mcp-9-'));
+    const codexHome = mkdtempSync(join(tmpdir(), 'co-codex-home-9-'));
     try {
-      const state = runDoctor(dir, ['--cli', 'codex'], {});
+      const state = runDoctor(dir, ['--cli', 'codex'], { CODEX_HOME: codexHome });
       if (state._error) { fail(`#9 doctor crashed: ${state._error}`); }
       else if (state.active_cli === 'codex'
           && state.cli_source === 'flag'
-          && Object.keys(state.playwright_mcp || {}).length === 0
+          && state.playwright_mcp?.codex === false
           && Array.isArray(state.warnings)
-          && state.warnings.some((w) => /Playwright MCP check skipped for CLI: codex/i.test(w))) {
-        pass('--cli codex → known but unsupported, warn "skipped for CLI: codex"');
+          && state.warnings.some((w) => PLAYWRIGHT_RE.test(w) && /active cli: codex/i.test(w))) {
+        pass('--cli codex without config → warning has active-CLI label');
       } else {
         fail(`#9 unexpected state: ${JSON.stringify(state)}`);
       }
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(codexHome, { recursive: true, force: true });
+    }
   }
 
   // 10. --cli vim (typo) → resolveActiveCli returns cli='unknown', source='flag'
@@ -424,6 +428,65 @@ try {
         fail(`#18 unexpected state: ${JSON.stringify(state)}`);
       }
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+
+  // 19. Codex user-level config.toml with Playwright → detected.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'co-mcp-19-'));
+    const codexHome = mkdtempSync(join(tmpdir(), 'co-codex-home-19-'));
+    try {
+      writeFileSync(join(codexHome, 'config.toml'), [
+        '[mcp_servers.playwright]',
+        'command = "npx"',
+        'args = ["-y", "@playwright/mcp@latest"]',
+        '',
+      ].join('\n'));
+      const state = runDoctor(dir, ['--cli', 'codex'], { CODEX_HOME: codexHome });
+      if (!expectWarn(state, '#19 codex user config')) {
+        // already failed
+      } else if (state.active_cli === 'codex'
+          && state.cli_source === 'flag'
+          && state.playwright_mcp?.codex === true
+          && Array.isArray(state.warnings)
+          && !state.warnings.some((w) => PLAYWRIGHT_RE.test(w))) {
+        pass('Codex user config.toml with Playwright → no warning');
+      } else {
+        fail(`#19 unexpected state: ${JSON.stringify(state)}`);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(codexHome, { recursive: true, force: true });
+    }
+  }
+
+  // 20. Codex project-scoped .codex/config.toml with Playwright → detected.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'co-mcp-20-'));
+    const codexHome = mkdtempSync(join(tmpdir(), 'co-codex-home-20-'));
+    try {
+      mkdirSync(join(dir, '.codex'), { recursive: true });
+      writeFileSync(join(dir, '.codex', 'config.toml'), [
+        '[mcp_servers.playwright]',
+        'command = "npx"',
+        'args = ["@playwright/mcp@latest"]',
+        '',
+      ].join('\n'));
+      const state = runDoctor(dir, ['--cli', 'codex'], { CODEX_HOME: codexHome });
+      if (!expectWarn(state, '#20 codex project config')) {
+        // already failed
+      } else if (state.active_cli === 'codex'
+          && state.cli_source === 'flag'
+          && state.playwright_mcp?.codex === true
+          && Array.isArray(state.warnings)
+          && !state.warnings.some((w) => PLAYWRIGHT_RE.test(w))) {
+        pass('Codex project .codex/config.toml with Playwright → no warning');
+      } else {
+        fail(`#20 unexpected state: ${JSON.stringify(state)}`);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(codexHome, { recursive: true, force: true });
+    }
   }
 
 } catch (e) {

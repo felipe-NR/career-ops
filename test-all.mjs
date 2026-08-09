@@ -10199,11 +10199,11 @@ try {
   // single browser when --parallel > 1 (issue #506).
   const claudeArgsLine = batchRunner
     .split('\n')
-    .find(l => l.includes('claude_args=('));
-  if (claudeArgsLine && claudeArgsLine.includes('--strict-mcp-config')) {
+    .find(l => l.includes('worker_args=(-p'));
+  if (claudeArgsLine && claudeArgsLine.includes('--strict-mcp-config') && /WORKER_CLI.*codex/.test(batchRunner) && /codex "\$\{worker_args\[@\]\}"/.test(batchRunner)) {
     pass('batch workers spawn with --strict-mcp-config (no inherited MCP)');
   } else {
-    fail('batch-runner.sh worker spawn missing --strict-mcp-config (issue #506 regression)');
+    fail('batch-runner.sh worker spawn is missing Claude MCP isolation or Codex CLI routing');
   }
 } catch (e) {
   fail(`Batch runner MCP isolation test crashed: ${e.message}`);
