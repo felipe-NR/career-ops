@@ -110,3 +110,9 @@ public commit with a stated reason.
 - @arijit1201 | 2026-08-03 | "I want to make the process of job-searching a worthwhile experience instead of feeling like a grueling Herculean labour." | id:36472612 | src:https://github.com/santifer/career-ops/discussions/2462 | n:62
 - @mrabro | Mohammad Rafi Abro | 2026-08-04 | id:4149030 | src:https://github.com/santifer/career-ops/discussions/2490 | n:63
 - @henryjrobinson | Henry | 2026-08-04 | "Job searching was completely broken. This gives me hopoe." | id:4121628 | src:https://github.com/santifer/career-ops/discussions/2511 | n:64
+- @sun-dev-nika | 2026-08-05 | id:290238869 | src:https://github.com/santifer/career-ops/discussions/2522 | n:65
+- @namnhatpham1995 | 2026-08-07 | "thank you for a great project, I really love career-ops" | id:50907520 | src:https://github.com/santifer/career-ops/discussions/2571 | n:66
+- @Andrei-WongE | Andrei-WongE | 2026-08-07 | id:44266405 | src:https://github.com/santifer/career-ops/discussions/2574 | n:67
+- @alexkons | Alekons | 2026-08-07 | id:22054290 | src:https://github.com/santifer/career-ops/discussions/2578 | n:68
+- @raghavrallan | Raghav Rallan | 2026-08-08 | id:168067295 | src:https://github.com/santifer/career-ops/discussions/2622 | n:69
+- @iyousif | Yousif Anwar | 2026-08-09 | "Makes the world a better place. One update at a time!" | id:18438102 | src:https://github.com/santifer/career-ops/discussions/2638 | n:70
