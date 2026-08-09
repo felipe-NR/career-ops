@@ -24,7 +24,7 @@ const FEED_BASE = 'https://speedrun-talent-network.com/api/v1/jobs';
 const TRUSTED_HOST = 'speedrun-talent-network.com';
 const PER_PAGE = 50;
 const DEFAULT_MAX_PAGES = 3;
-const MAX_PAGES_CAP = 120;
+const MAX_PAGES_CAP = 500;
 
 /** @param {string} url */
 function assertFeedUrl(url) {
