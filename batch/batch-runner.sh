@@ -49,10 +49,9 @@ START_FROM=0
 MAX_RETRIES=2
 MIN_SCORE=0
 SKIP_PDF=false
-MODEL=""  # explicit override; otherwise resolved from config/profile.yml spend_tier
+MODEL=""  # explicit override; otherwise the selected CLI's default may apply
 RESOLVED_MODEL=""
 RESOLVED_SPEND_TIER=""
-RESOLVED_REASONING_EFFORT=""
 RATE_LIMIT_SLEEP=300
 BATCH_PAUSED=false
 STATUS_ONLY=false
@@ -86,8 +85,8 @@ Options:
   --skip-pdf           Skip PDF generation entirely (write ❌ in tracker PDF column)
   --rate-limit-sleep N Seconds to wait before retrying a rate-limited worker
                        (default: 300)
-  --model NAME         Override the worker model. Without an override, the
-                       selected CLI's spend_tier mapping is used.
+  --model NAME         Override the worker model. An explicit override takes
+                       precedence over the configured/default model.
   --status             Show batch progress and a per-job table, then exit
   --watch              Live-refresh progress until the run completes
   -h, --help           Show this help
@@ -371,22 +370,6 @@ spend_tier_to_model() {
   esac
 }
 
-# User-level Codex routing policy. Unspecified tiers keep the Codex CLI's
-# configured defaults; standard is pinned for consistent career-ops workers.
-codex_spend_tier_to_model() {
-  case "$1" in
-    standard) echo "gpt-5.5" ;;
-    *) echo "" ;;
-  esac
-}
-
-codex_spend_tier_to_reasoning_effort() {
-  case "$1" in
-    standard) echo "medium" ;;
-    *) echo "" ;;
-  esac
-}
-
 # Resolve the model to pass to the selected worker. --model always wins.
 resolve_worker_model() {
   if [[ -n "$MODEL" ]]; then
@@ -398,9 +381,6 @@ resolve_worker_model() {
   RESOLVED_SPEND_TIER="$(read_spend_tier)"
   if [[ "$WORKER_CLI" == "claude" ]]; then
     RESOLVED_MODEL="$(spend_tier_to_model "$RESOLVED_SPEND_TIER")"
-  else
-    RESOLVED_MODEL="$(codex_spend_tier_to_model "$RESOLVED_SPEND_TIER")"
-    RESOLVED_REASONING_EFFORT="$(codex_spend_tier_to_reasoning_effort "$RESOLVED_SPEND_TIER")"
   fi
 }
 
@@ -606,9 +586,6 @@ process_offer() {
     worker_args=(exec --cd "$PROJECT_DIR" --sandbox danger-full-access --dangerously-bypass-approvals-and-sandbox --ephemeral)
     if [[ -n "$RESOLVED_MODEL" ]]; then
       worker_args+=(--model "$RESOLVED_MODEL")
-    fi
-    if [[ -n "$RESOLVED_REASONING_EFFORT" ]]; then
-      worker_args+=(-c "model_reasoning_effort=\"$RESOLVED_REASONING_EFFORT\"")
     fi
     worker_args+=(-)
   fi

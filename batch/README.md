@@ -4,8 +4,8 @@ Process multiple job offers in parallel via headless workers. Each worker runs t
 
 To make Codex the persistent default for this workspace, add `CAREER_OPS_CLI=codex` to `.env`. For a single run, use `--cli codex` instead.
 
-With `spend_tier: standard`, Codex workers are pinned to `gpt-5.5` with
-`model_reasoning_effort=medium`. An explicit `--model` override still wins.
+Codex workers use the Codex CLI's configured default model unless `--model` is
+provided explicitly. An explicit `--model` override always takes precedence.
 
 ## Quick Start
 

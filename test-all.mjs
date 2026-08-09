@@ -10151,15 +10151,15 @@ try {
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 } catch (e) { fail(`Batch spend_tier routing test crashed (invalid value): ${e.message}`); }
 
-// Codex standard tier pins both model and reasoning effort
+// Codex uses its configured defaults unless an explicit model overrides them
 try {
   const { tmp, batchDir, fakeBin } = makeTierFixture('spend_tier: standard\n');
   const argFile = join(tmp, 'codex-argv.txt');
   const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: argFile };
   const codexOut = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--cli', 'codex', '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
   const codexArgv = existsSync(argFile) ? readFileSync(argFile, 'utf-8') : '';
-  if (codexArgv.includes('--model') && codexArgv.includes('gpt-5.5') && codexArgv.includes('model_reasoning_effort="medium"') && codexOut.includes('spend_tier=standard')) {
-    pass('Codex standard spend_tier resolves to gpt-5.5 with medium reasoning');
+  if (!codexArgv.includes('--model') && !codexArgv.includes('model_reasoning_effort') && codexOut.includes('Codex configured default') && codexOut.includes('spend_tier=standard')) {
+    pass('Codex standard spend_tier leaves model and reasoning at configured defaults');
   } else {
     fail(`Codex standard tier routing mismatch: argv=${JSON.stringify(codexArgv)}, out=${JSON.stringify(codexOut.slice(-240))}`);
   }

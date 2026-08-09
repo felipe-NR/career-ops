@@ -115,7 +115,9 @@ These files contain system logic, scripts, templates, and instructions that impr
 | `KIMI.md` | Agent instructions (Kimi CLI) |
 | `GEMINI.md` | Legacy no-op context guard (prevents Antigravity duplicate imports) |
 | `AGENTS.md` | Canonical agent instructions (imported by CLI-specific wrappers) |
+| `.ai-jail` / `.mcp.json` / `.tool-versions` | Workspace sandbox, MCP, and runtime-tool configuration |
 | `*.mjs` | Utility scripts |
+| `scan-gupy.mjs` / `scripts/gupy-bridge.py` | Gupy scanner and its bounded bridge adapter |
 | `providers/` | Job-source provider modules for the zero-token scanner |
 | `plugins/` | Bundled plugins + the plugin engine (opt-in external integrations) |
 | `plugins.mjs` | Plugin CLI (list/run/available/add/new/enable/skill/trust/remove) |

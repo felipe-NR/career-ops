@@ -58,6 +58,9 @@ export const REEXEC_BUFFER_TIMEOUT_MS = parsePositiveInt(process.env.CAREER_OPS_
 
 // System layer paths — ONLY these files get updated
 const SYSTEM_PATHS = [
+  '.ai-jail',
+  '.mcp.json',
+  '.tool-versions',
   'modes/README.md',
   'modes/_shared.md',
   'modes/_writing.md',
@@ -176,6 +179,8 @@ const SYSTEM_PATHS = [
   'classify-tier.mjs',
   'scan-ats-full.mjs',
   'scan-interamt.mjs',
+  'scan-gupy.mjs',
+  'scripts/gupy-bridge.py',
   'company-funded.mjs',
   'match-star.mjs',
   'jd-skill-gap.mjs',
