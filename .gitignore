@@ -57,6 +57,7 @@ config/profile.yml
 config/cv-facts.json
 config/benchmarks.yml
 portals.yml
+article-digest.md
 modes/_profile.md
 modes/_custom.md
 modes/_brief.md
@@ -120,3 +121,4 @@ plan/
 # (see DATA_CONTRACT.md). Re-include them past the unanchored user-layer
 # patterns above (cv.md, portals.yml).
 !test-fixtures/**
+data/agent-inbox.md
