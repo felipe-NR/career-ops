@@ -65,6 +65,8 @@ If yes → `node update-system.mjs apply`. If no → `node update-system.mjs dis
 
 Before the first message of each session (after the update check and doctor check), display the pipeline funnel below. Skip if the user opened with a URL or JD — `auto-pipeline` is already in flight.
 
+**If your harness already displayed it, do not repeat it.** A SessionStart hook may render the funnel directly (Claude Code does this via `.claude/career-ops-startup.mjs`, which emits it as `systemMessage`); in that case the hook's `additionalContext` says so explicitly and you go straight to answering the user.
+
 ```
 scan (zero-token)
   ↓
