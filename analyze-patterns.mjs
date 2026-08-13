@@ -743,12 +743,21 @@ function analyze() {
 
   // --- Blocker analysis ---
   const blockerCounts = new Map();
-  const totalWithGaps = enriched.filter(e => e.report?.gaps?.length > 0);
+  // Only entries carrying gaps can produce a blocker; entries without one must
+  // not pad the denominator. `totalWithGaps` was already computed here and
+  // never used — the intended base was written down but not wired in.
+  const blockerBase = enriched.filter(e => e.report?.gaps?.length > 0).length;
   for (const e of enriched) {
     if (!e.report?.gaps) continue;
+    // One entry contributes at most once per blocker type: several gaps in the
+    // same report hitting the same type is one affected entry, not several.
+    const entryBlockers = new Set();
     for (const gap of e.report.gaps) {
       const type = extractBlockerType(gap);
       if (!type) continue;
+      entryBlockers.add(type);
+    }
+    for (const type of entryBlockers) {
       blockerCounts.set(type, (blockerCounts.get(type) || 0) + 1);
     }
   }
@@ -756,7 +765,7 @@ function analyze() {
     .map(([blocker, frequency]) => ({
       blocker,
       frequency,
-      percentage: Math.round((frequency / enriched.length) * 100),
+      percentage: blockerBase ? Math.round((frequency / blockerBase) * 100) : 0,
     }))
     .sort((a, b) => b.frequency - a.frequency);
 
@@ -881,26 +890,43 @@ function analyze() {
     // From tracker Notes column: "DISCARD: <reason>" or "SKIP: <reason>"
     const notesMatch = (e.notes || '').match(/(?:DISCARD|SKIP):\s*([^,;\n]+)/gi);
     if (notesMatch) {
+      // One row contributes at most once per reason — a Notes cell repeating
+      // the same tag is still one affected row.
+      const entryReasons = new Set();
       for (const m of notesMatch) {
         const key = m.replace(/^(?:DISCARD|SKIP):\s*/i, '').trim().toLowerCase();
-        if (key) discardReasonCounts.set(key, (discardReasonCounts.get(key) || 0) + 1);
+        if (key) entryReasons.add(key);
+      }
+      for (const key of entryReasons) {
+        discardReasonCounts.set(key, (discardReasonCounts.get(key) || 0) + 1);
       }
     }
   }
+  // Both the share and the recommendation threshold are measured against the
+  // DISCARDABLE subset (self_filtered + negative) — the same rows the loop
+  // above is allowed to count — not against every tracker entry. Using
+  // enriched.length let pending 'Evaluated' rows, which can never carry a
+  // reason, inflate the base: at 263 entries with only 60 discardable, the
+  // threshold landed at 40 and no honest reason could ever reach it, while any
+  // blanket label applied to the whole subset cleared it trivially.
+  const discardableCount = enriched.filter(
+    e => e.outcome === 'self_filtered' || e.outcome === 'negative'
+  ).length;
+
   const discardReasonStats = [...discardReasonCounts.entries()]
     .map(([reason, frequency]) => ({
       reason,
       frequency,
-      percentage: Math.round((frequency / enriched.length) * 100),
+      percentage: discardableCount ? Math.round((frequency / discardableCount) * 100) : 0,
     }))
     .sort((a, b) => b.frequency - a.frequency);
 
   // Recommend updating _custom.md when a single reason dominates
   const topDiscardReason = discardReasonStats[0];
-  if (topDiscardReason && topDiscardReason.frequency >= Math.max(3, Math.ceil(enriched.length * 0.15))) {
+  if (topDiscardReason && topDiscardReason.frequency >= Math.max(3, Math.ceil(discardableCount * 0.15))) {
     recommendations.push({
       action: `Add "${topDiscardReason.reason}" filter to modes/_custom.md to avoid wasting evaluation effort`,
-      reasoning: `"${topDiscardReason.reason}" is the most frequent discard reason (${topDiscardReason.frequency}x, ${topDiscardReason.percentage}% of all applications).`,
+      reasoning: `"${topDiscardReason.reason}" is the most frequent discard reason (${topDiscardReason.frequency}x, ${topDiscardReason.percentage}% of ${discardableCount} eligible entries with self-filtered or negative outcomes).`,
       impact: 'high',
     });
   }
@@ -910,10 +936,16 @@ function analyze() {
   for (const e of enriched) {
     if (e.outcome !== 'negative' && e.outcome !== 'self_filtered') continue;
     if (!e.report?.gaps) continue;
+    // One entry contributes at most once per technology: a report whose gaps
+    // mention Java three times is one candidate missing Java, not three.
+    const entryTechs = new Set();
     for (const gap of e.report.gaps) {
       for (const tech of extractTechMentions(gap.description)) {
-        stackGapCounts.set(tech, (stackGapCounts.get(tech) || 0) + 1);
+        entryTechs.add(tech);
       }
+    }
+    for (const tech of entryTechs) {
+      stackGapCounts.set(tech, (stackGapCounts.get(tech) || 0) + 1);
     }
   }
   const techStackGaps = [...stackGapCounts.entries()]
@@ -926,7 +958,7 @@ function analyze() {
   if (geoBlocker && geoBlocker.percentage >= 20) {
     recommendations.push({
       action: `Tighten location filters in portals.yml -- ${geoBlocker.percentage}% of applications hit a geo-restriction blocker`,
-      reasoning: `${geoBlocker.frequency} of ${enriched.length} offers are location-restricted (US/Canada-only). These are wasted evaluation effort.`,
+      reasoning: `${geoBlocker.frequency} of ${blockerBase} entries carrying gaps are location-restricted (US/Canada-only). These are wasted evaluation effort.`,
       impact: 'high',
     });
   }
@@ -1037,6 +1069,11 @@ function analyze() {
     scoreThreshold,
     techStackGaps,
     discardReasonStats,
+    // The base the percentages above are shares of. Exported so a reader can
+    // tell at a glance which denominator is in play — its absence is what let
+    // the wrong one go unnoticed.
+    discardReasonBase: discardableCount,
+    blockerBase,
     recommendations,
   };
 }
@@ -1076,10 +1113,10 @@ function printSummary(result) {
 
   // Blockers
   if (blockerAnalysis.length > 0) {
-    console.log('\nTOP BLOCKERS');
+    console.log(`\nTOP BLOCKERS (of ${result.blockerBase} entries carrying gaps)`);
     console.log('-'.repeat(40));
     for (const b of blockerAnalysis) {
-      console.log(`  ${b.blocker.padEnd(20)} ${String(b.frequency).padStart(2)}x (${b.percentage}% of all)`);
+      console.log(`  ${b.blocker.padEnd(20)} ${String(b.frequency).padStart(2)}x (${b.percentage}%)`);
     }
   }
 
@@ -1101,7 +1138,7 @@ function printSummary(result) {
 
   // Discard reasons
   if (discardReasonStats && discardReasonStats.length > 0) {
-    console.log('\nTOP DISCARD / SKIP REASONS');
+    console.log(`\nTOP DISCARD / SKIP REASONS (of ${result.discardReasonBase} self-filtered/negative entries)`);
     console.log('-'.repeat(40));
     for (const d of discardReasonStats.slice(0, 10)) {
       console.log(`  ${d.reason.padEnd(30)} ${String(d.frequency).padStart(2)}x (${d.percentage}%)`);

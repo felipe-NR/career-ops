@@ -96,7 +96,33 @@ const CONCURRENCY = 10;
 // longer matches "Coordinator", "SDR" no longer matches anything mid-word, etc.
 // Multi-word phrases and keywords containing non-letters (".NET", "SAP ",
 // "L&D") keep fast, permissive substring matching.
+// A keyword may also OPT IN to word-boundary matching with a trailing `\b`,
+// regardless of length: in portals.yml write it single-quoted ('Java\b') so
+// YAML keeps the backslash literal — double quotes would turn `\b` into an
+// actual backspace character.
+//
+// Motivation: length was the only boundary signal, and it silently mismatched
+// for 4+ char stack names. `title_filter.negative: "Java "` was written with a
+// trailing space to mean "Java, not JavaScript", but buildTitleFilter() trims
+// every keyword before compiling, leaving "java" — 4 chars, so it fell through
+// to includes() and matched "javascript". Measured on one user's corpus: 4
+// unique JavaScript titles dropped, incl. a Brazil+remote+React role.
 export function compileKeyword(kw) {
+  if (kw.endsWith('\\b')) {
+    const bare = kw.slice(0, -2);
+    if (bare) {
+      // Escape regex metacharacters — an opted-in keyword can legitimately
+      // contain them (".net\b", "c++\b").
+      const escaped = bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // `\b` only means anything next to a word character. Anchoring a
+      // keyword that starts or ends with punctuation (".net") on that side
+      // would never match, so each edge gets a boundary only if it can.
+      const lead = /^\w/.test(bare) ? '\\b' : '';
+      const trail = /\w$/.test(bare) ? '\\b' : '';
+      const re = new RegExp(`${lead}${escaped}${trail}`);
+      return (lower) => re.test(lower);
+    }
+  }
   if (/^[a-z]{2,3}$/.test(kw)) {
     const re = new RegExp(`\\b${kw}\\b`);
     return (lower) => re.test(lower);
