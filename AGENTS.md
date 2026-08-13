@@ -70,7 +70,7 @@ Before the first message of each session (after the update check and doctor chec
 **Codex lifecycle caveat:** the interactive Codex CLI creates the session lazily when the first prompt is submitted. Its `SessionStart` hook therefore cannot draw on the empty welcome screen shown immediately after a bare `codex` command. It displays the funnel after the initial prompt is submitted and before the assistant's response. Do not claim that the Codex hook renders at process launch.
 
 ```
-scan (zero-token)
+scan (zero-token: scan.mjs · scan-ats-full)
   ↓
 triage (_brief.md ~2K tokens/vaga — no files written)
   ↓  PASS/MARGINAL only
@@ -83,7 +83,7 @@ apply (form fill via Playwright)
 
 | Stage | Cost | What it eliminates |
 |-|-|-|
-| `scan` | R$ 0 — REST API/Playwright only, zero LLM | Raw volume (hundreds of postings) |
+| `scan` | R$ 0 — REST APIs, zero LLM (`scan.mjs` incl. the Gupy provider, `scan-ats-full`) | Raw volume (hundreds of postings) |
 | `triage` | Minimal — 1 small file | Obvious DQs (stack-gap, seniority, geo) before spending eval tokens |
 | `pipeline` | High — full stack | Mediocre postings that passed triage but don't close on blocks A-F |
 | `pdf` | Medium | Runs only if score ≥ floor — avoids PDF for roles you won't apply to |
@@ -124,7 +124,7 @@ AI-powered, CLI-agnostic job search automation: pipeline tracking, offer evaluat
 | `scan.mjs` | Zero-token portal scanner (Greenhouse/Ashby/Lever APIs, zero LLM cost) |
 | `scan-ats-full.mjs` | Reverse-ATS keyword-first scanner over full public ATS datasets (Greenhouse/Lever/Ashby/Workday/iCIMS), filtered by portals.yml `title_filter`/`location_filter` — no company list needed; checkpoints every 500 companies, `--resume` continues an interrupted sweep |
 | `scan-interamt.mjs` | Playwright browser scanner for Interamt.de (German public sector portal — Apache Wicket, no REST API) |
-| `scan-gupy.mjs` | Zero-token Gupy scanner via `gupy-job-scrapper` sibling project — delegates all HTTP to that repo so career-ops never calls Gupy directly; two runners: `package` (python3 subprocess, default) and `api` (Django REST when stack is up); run with `npm run scan:gupy` |
+| `providers/gupy.mjs` | Zero-token Gupy provider (Brazilian ATS platform) — searched by keyword across the whole platform rather than per company slug, so it surfaces employers absent from `tracked_companies`. Configured as the `Gupy` entry under `job_boards:` in `portals.yml`; runs inside `scan.mjs` like any other provider. Replaced the `scan-gupy.mjs` + `gupy-job-scrapper` Python bridge (retired 2026-08-13) |
 | `check-liveness.mjs` / `liveness-core.mjs` | Job posting liveness checker + shared logic (expired signals win over generic Apply text) |
 | `set-status.mjs` | Canonical tracker-row update: `node set-status.mjs <report#\|company> <State> [--note] [--force]` — strict states.yml validation, report-link mismatch guard, shared lock, atomic write |
 | `invite-match.mjs` | Fuzzy-match a pasted interview invite (company, date, req ID) against the tracker, ranking candidates when a company has multiple entries (JSON or `--summary`) |

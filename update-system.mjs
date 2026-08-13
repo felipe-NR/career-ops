@@ -185,8 +185,6 @@ const SYSTEM_PATHS = [
   'classify-tier.mjs',
   'scan-ats-full.mjs',
   'scan-interamt.mjs',
-  'scan-gupy.mjs',
-  'scripts/gupy-bridge.py',
   'company-funded.mjs',
   'match-star.mjs',
   'jd-skill-gap.mjs',

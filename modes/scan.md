@@ -36,8 +36,15 @@ Read `portals.yml` which contains:
 
 These run outside the agent and consume zero LLM tokens:
 
-- **`npm run scan:gupy`** (`scan-gupy.mjs`) — Gupy platform (BR market). Delegates all HTTP to the `gupy-job-scrapper` sibling project. The `site:gupy.io` WebSearch queries in `portals.yml` are **disabled** in Level 3 to avoid double-counting; run `scan-gupy.mjs` first and let the scanner handle Gupy coverage.
 - **`npm run scan:interamt`** (`scan-interamt.mjs`) — Interamt.de (German public sector, Playwright-driven).
+
+> **Gupy is no longer a dedicated scanner.** It became a normal provider
+> (`providers/gupy.mjs`, a `job_boards:` entry) on 2026-08-13, so `npm run scan`
+> covers it — there is nothing separate to run. The `site:gupy.io` WebSearch
+> queries stay **disabled** in Level 3: the provider sweeps the whole platform
+> by keyword in real time, and an indexed search would only re-add stale
+> duplicates. Never re-enable them, and never add a per-company
+> `scan_method: websearch` entry with a `site:gupy.io` query.
 
 ### Level 0 — Local Parser (CHEAPEST)
 
