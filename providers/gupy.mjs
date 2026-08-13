@@ -45,6 +45,26 @@ import { resolveProfileKeywords } from './_profile-keywords.mjs';
 // keys: `keywords` (falls back to config/profile.yml target_roles), `q`,
 // `since_days`, `max_pages`, `workplace_types`, `job_types`, `state`,
 // `country`.
+//
+// ── Reading the provider contract here ───────────────────────────────────────
+// One entry, but N independent queries: every keyword is its own complete
+// result set, not a slice of a shared one. Provider conventions written for
+// single-source boards are DEFAULTS here, not constraints — where the literal
+// reading produces a worse outcome, deviate on purpose and say why in the code.
+// Three deviations exist so far:
+//
+//   - `ctx.maxPages` is a total page budget for the call, not pages per sweep,
+//     counting pages ATTEMPTED. The per-sweep reading lets one probe issue one
+//     request per keyword.
+//   - A failed page ends its own sweep and the others continue (workday's
+//     policy), instead of failing the whole entry (a16z's). Sweeps 1-6 are
+//     complete and correct when sweep 7 dies.
+//   - `max_pages` is per keyword, so the entry's real ceiling is
+//     max_pages × keywords.length.
+//
+// What does NOT get an exception: the security conventions (host allowlist,
+// `redirect: 'error'`), the normalized Job shape, and zero-token/zero-auth.
+// Those hold for every provider regardless of shape.
 
 const API_BASE = 'https://employability-portal.gupy.io/api/v1/jobs';
 const API_HOST = 'employability-portal.gupy.io';
@@ -292,8 +312,11 @@ export default {
     // and Gupy is configured under job_boards. It becomes real the moment either
     // of those changes — the contract in providers/README.md asks for the hint
     // to be honored regardless, and this provider was ignoring it outright.
+    // Counts pages ATTEMPTED, not pages returned: a failing sweep moves on to
+    // the next keyword (see the per-sweep isolation below), so counting only
+    // successes would let a probe against a broken board walk every keyword.
     const pageBudget = Number.isInteger(ctx?.maxPages) && ctx.maxPages > 0 ? ctx.maxPages : Infinity;
-    let pagesFetched = 0;
+    let pagesAttempted = 0;
 
     // Recency window. `ctx.sinceMs` — the run's own window, from --since or
     // --posted-after — wins when present: an operator who widened the run to 30
@@ -316,10 +339,24 @@ export default {
     const seen = new Set();
     const out = [];
 
+    // Per-sweep failure isolation. Each keyword is an independent query, so a
+    // dead page in sweep 7 says nothing about sweeps 1-6 — losing them would be
+    // throwing away complete, correct results. This is the workday.mjs policy
+    // (keep the pages in hand, warn, stop that unit) rather than the a16z one
+    // (fail loudly), and _http.mjs is explicit that the choice is the caller's:
+    // "that policy genuinely differs per provider".
+    //
+    // The a16z reasoning still applies WITHIN a sweep — a mid-sweep failure
+    // leaves that keyword partial. Harmless here: the feed is newest-first, so a
+    // partial sweep is "the freshest N pages of this keyword", exactly the shape
+    // `max_pages` truncation already produces and already warns about.
+    let firstError = null;
+    let succeededOnce = false;
+
     for (const keyword of keywords) {
-      if (pagesFetched >= pageBudget) break;
+      if (pagesAttempted >= pageBudget) break;
       for (let page = 0; page < maxPages; page++) {
-        if (pagesFetched >= pageBudget) break;
+        if (pagesAttempted >= pageBudget) break;
         const params = new URLSearchParams({
           jobName: keyword,
           offset: String(page * PER_PAGE),
@@ -331,16 +368,27 @@ export default {
         if (country) params.set('country', country);
 
         const url = `${API_BASE}?${params}`;
-        // redirect:'error' prevents SSRF via server-side redirects. Retried on
-        // transient upstream failures so one blip mid-sweep cannot abort the
-        // whole board and return nothing.
-        const json = await fetchJsonWithRetry(ctx, url, { redirect: 'error' });
-        pagesFetched++;
-        if (!json || !Array.isArray(json.data)) {
-          throw new Error(
-            `gupy: unexpected API response for "${keyword}" page ${page} — expected { data: [...] }, got keys: [${json ? Object.keys(json).join(', ') : 'null'}]`,
-          );
+        pagesAttempted++;
+        let json;
+        try {
+          // redirect:'error' prevents SSRF via server-side redirects. Retried on
+          // transient upstream failures so one blip mid-sweep cannot abort the
+          // whole board and return nothing.
+          json = await fetchJsonWithRetry(ctx, url, { redirect: 'error' });
+          if (!json || !Array.isArray(json.data)) {
+            // A shape change is systemic, so it will fail every sweep and reach
+            // the all-failed rethrow below. Caught here so a one-off bad page
+            // does not cost the sweeps that already succeeded.
+            throw new Error(
+              `gupy: unexpected API response for "${keyword}" page ${page} — expected { data: [...] }, got keys: [${json ? Object.keys(json).join(', ') : 'null'}]`,
+            );
+          }
+        } catch (err) {
+          if (firstError === null) firstError = err;
+          console.error(`⚠️  gupy: sweep "${keyword}" stopped at page ${page} — ${err.message}`);
+          break;
         }
+        succeededOnce = true;
 
         const pageJobs = [];
         for (const raw of json.data) {
@@ -375,6 +423,18 @@ export default {
         }
       }
     }
+
+    // Not one sweep produced a page: there is no partial worth keeping, and the
+    // cause is an outage, a moved endpoint or a changed payload — all of which
+    // must reach scan.mjs's `Errors (N):` print and data/portal-health.tsv
+    // instead of passing for a quiet zero. This is the half of the a16z policy
+    // that survives per-sweep isolation.
+    //
+    // Rethrows the ORIGINAL error, never a wrapper: verify-portals'
+    // classifyFetchError reads err.status and err.name to tell slug_gone from
+    // auth from server from network, and wrapping would flatten all four to
+    // 'unknown' — which is also what the portal-health streak escalates on.
+    if (!succeededOnce && firstError !== null) throw firstError;
     return out;
   },
 };

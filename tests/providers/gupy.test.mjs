@@ -271,15 +271,118 @@ try {
   if (emptyCalls.length === 1 && empty.length === 0) pass('fetch() returns [] after one call on an empty feed');
   else fail(`empty feed = ${JSON.stringify({ calls: emptyCalls.length, jobs: empty.length })}`);
 
-  // A malformed payload must throw loudly rather than return a silent partial.
+  // A malformed payload on the only sweep leaves nothing to keep, so it still
+  // surfaces as an error rather than an empty board.
   let threw = null;
   try {
     await provider.fetch({ keywords: ['X'], max_pages: 1 }, { fetchJson: async () => ({ unexpected: true }) });
   } catch (err) {
     threw = err.message;
   }
-  if (threw && threw.includes('unexpected API response')) pass('fetch() throws on a malformed payload instead of returning a silent partial');
+  if (threw && threw.includes('unexpected API response')) pass('fetch() surfaces a malformed payload instead of returning a silent empty board');
   else fail(`malformed payload handling = ${JSON.stringify(threw)}`);
+
+  // ── per-sweep failure isolation ──────────────────────────────────────────
+  // Each keyword is an independent query, so a dead sweep must not discard the
+  // sweeps that already completed correctly.
+  const isoCalls = [];
+  const isoWarnings = [];
+  let isolated;
+  const beforeIso = console.error;
+  try {
+    console.error = (...args) => isoWarnings.push(args.join(' '));
+    isolated = await provider.fetch({ keywords: ['A', 'B', 'C'], max_pages: 1 }, {
+      sleep: async () => {},
+      fetchJson: async (url) => {
+        const kw = new URL(url).searchParams.get('jobName');
+        isoCalls.push(kw);
+        if (kw === 'B') throw Object.assign(new Error('HTTP 404'), { status: 404 });
+        return { data: [mk(kw === 'A' ? 1 : 2)], pagination: { total: 1 } };
+      },
+    });
+  } finally {
+    console.error = beforeIso;
+  }
+  if (isolated.length === 2 && isoCalls.join(',') === 'A,B,C'
+      && isoWarnings.some((w) => w.includes('sweep "B" stopped'))) {
+    pass('fetch() keeps the sweeps that succeeded when one keyword fails, and warns about the one that did not');
+  } else {
+    fail(`sweep isolation = ${JSON.stringify({ jobs: isolated.length, calls: isoCalls, warnings: isoWarnings })}`);
+  }
+
+  // A failure mid-sweep keeps the pages already in hand (newest-first, so a
+  // partial sweep is the freshest N pages) and moves on.
+  const partialCalls = [];
+  let partial;
+  const beforePartial = console.error;
+  try {
+    console.error = () => {};
+    partial = await provider.fetch({ keywords: ['A'], max_pages: 5 }, {
+      sleep: async () => {},
+      fetchJson: async (url) => {
+        const offset = Number(new URL(url).searchParams.get('offset'));
+        partialCalls.push(offset);
+        if (offset > 0) throw Object.assign(new Error('HTTP 500'), { status: 500 });
+        return { data: Array.from({ length: 100 }, (_, i) => mk(i)), pagination: { total: 100 } };
+      },
+    });
+  } finally {
+    console.error = beforePartial;
+  }
+  // page 0 once, then page 1 three times (1 attempt + 2 retries on a 5xx).
+  if (partial.length === 100 && partialCalls.length === 4) {
+    pass('fetch() keeps the pages already read when a sweep dies mid-pagination');
+  } else {
+    fail(`mid-sweep partial = ${JSON.stringify({ jobs: partial.length, calls: partialCalls })}`);
+  }
+
+  // Every sweep dead = outage, moved endpoint or changed payload. Must rethrow
+  // the ORIGINAL error object: verify-portals' classifyFetchError reads
+  // err.status to tell server/auth/slug_gone apart, and portal-health escalates
+  // on that classification.
+  let allFailed = null;
+  let attempts = 0;
+  const beforeAll = console.error;
+  try {
+    console.error = () => {};
+    await provider.fetch({ keywords: ['A', 'B'], max_pages: 2 }, {
+      sleep: async () => {},
+      fetchJson: async () => { attempts++; throw Object.assign(new Error('HTTP 503'), { status: 503 }); },
+    });
+  } catch (err) {
+    allFailed = err;
+  } finally {
+    console.error = beforeAll;
+  }
+  // 2 keywords × 1 page each (the sweep breaks on failure) × 3 attempts.
+  if (allFailed && allFailed.status === 503 && attempts === 6) {
+    pass('fetch() rethrows the original error — status intact — when no sweep produced a page');
+  } else {
+    fail(`all-failed = ${JSON.stringify({ status: allFailed?.status, message: allFailed?.message, attempts })}`);
+  }
+
+  // The probe budget counts pages ATTEMPTED, so a broken board cannot make a
+  // 1-page probe walk every keyword.
+  let brokenProbeCalls = 0;
+  let brokenProbeErr = null;
+  const beforeBroken = console.error;
+  try {
+    console.error = () => {};
+    await provider.fetch({ keywords: ['A', 'B', 'C', 'D', 'E'], max_pages: 5 }, {
+      maxPages: 1,
+      sleep: async () => {},
+      fetchJson: async () => { brokenProbeCalls++; throw Object.assign(new Error('HTTP 404'), { status: 404 }); },
+    });
+  } catch (err) {
+    brokenProbeErr = err;
+  } finally {
+    console.error = beforeBroken;
+  }
+  if (brokenProbeCalls === 1 && brokenProbeErr?.status === 404) {
+    pass('fetch() spends the ctx.maxPages budget on failed pages too, so a broken board still costs one request');
+  } else {
+    fail(`broken probe = ${JSON.stringify({ calls: brokenProbeCalls, status: brokenProbeErr?.status })}`);
+  }
 
   // Keywords fall back to config/profile.yml target_roles (the vdab.mjs
   // pattern) instead of a hardcoded ['Desenvolvedor'] — a pt-BR targeting
