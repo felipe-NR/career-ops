@@ -61,6 +61,32 @@ If `{"status": "update-available", "local": ..., "remote": ..., "changelog": ...
 
 If yes → `node update-system.mjs apply`. If no → `node update-system.mjs dismiss`. Every other status (`up-to-date`, `dismissed`, `offline`, `no-remote-version`) → say nothing. The user can force a check anytime ("check for updates" / "update career-ops"); rollback: `node update-system.mjs rollback`.
 
+## Startup Display — Cost×Benefit Funnel
+
+Before the first message of each session (after the update check and doctor check), display the pipeline funnel below. Skip if the user opened with a URL or JD — `auto-pipeline` is already in flight.
+
+```
+scan (zero-token)
+  ↓
+triage (_brief.md ~2K tokens/vaga — no files written)
+  ↓  PASS/MARGINAL only
+pipeline (full A-G evaluation — ~30–50K tokens/vaga)
+  ↓  score ≥ min_score_pdf only
+pdf (tailored CV generation)
+  ↓  only when actually applying
+apply (form fill via Playwright)
+```
+
+| Stage | Cost | What it eliminates |
+|-|-|-|
+| `scan` | R$ 0 — REST API/Playwright only, zero LLM | Raw volume (hundreds of postings) |
+| `triage` | Minimal — 1 small file | Obvious DQs (stack-gap, seniority, geo) before spending eval tokens |
+| `pipeline` | High — full stack | Mediocre postings that passed triage but don't close on blocks A-F |
+| `pdf` | Medium | Runs only if score ≥ floor — avoids PDF for roles you won't apply to |
+| `apply` | High + Playwright | Only when you've decided to apply — never automatic |
+
+**Golden rules:** never skip triage after scan; never run `pdf` before checking score; use `batch` (≤3 workers) when the backlog has 5+ postings; run `patterns` after ~20 accumulated evaluations.
+
 ## What is career-ops
 
 AI-powered, CLI-agnostic job search automation: pipeline tracking, offer evaluation, CV generation, portal scanning, batch processing. Runs on any AI coding CLI following the [open agent skill standard](https://agentskills.io) (Claude Code, Cursor, Codex, OpenCode, Qwen, Copilot, Kimi, Antigravity CLI, Grok Build CLI). Legacy Gemini API evaluation remains via `gemini-eval.mjs`.
