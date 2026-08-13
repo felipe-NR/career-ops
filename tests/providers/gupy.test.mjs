@@ -161,6 +161,58 @@ try {
     fail(`fetch() pagination = ${JSON.stringify({ offsets, limits, jobs: paged.length })}`);
   }
 
+  // REGRESSION (2026-08-13): pagination.total reports the PAGE SIZE, not the
+  // result-set size — the live API answers total=100 at every offset of a
+  // 370-posting keyword. Trusting it (the way a16z-speedrun-talent trusts
+  // `total_pages`, which is an honest page count) broke every sweep after page
+  // 0 and dropped 205 of 548 deduped postings in silence, 14 of them inside the
+  // active window. A short page is the only end-of-feed signal this API gives.
+  const lyingCalls = [];
+  const lyingCtx = {
+    fetchJson: async (url) => {
+      lyingCalls.push(url);
+      const offset = Number(new URL(url).searchParams.get('offset'));
+      const remaining = Math.max(0, 370 - offset);
+      const data = Array.from({ length: Math.min(100, remaining) }, (_, i) => mk(offset + i));
+      return { data, pagination: { total: 100, limit: 100, offset } };
+    },
+  };
+  const lying = await provider.fetch({ keywords: ['Desenvolvedor'], max_pages: 5 }, lyingCtx);
+  if (lyingCalls.length === 4 && lying.length === 370) {
+    pass('fetch() ignores a pagination.total that reports the page size and paginates until a short page');
+  } else {
+    fail(`fetch() lying-total = ${JSON.stringify({ calls: lyingCalls.length, jobs: lying.length })}`);
+  }
+
+  // verify-portals.mjs probes with ctx.maxPages:1 under a 4-request sentinel.
+  // This provider paginates per (keyword × page), so the budget must be a TOTAL
+  // for the call: read per keyword, a 10-keyword entry would spend 10 requests
+  // on a 1-page probe, trip the sentinel, and get a live board reported as a
+  // cut-off.
+  const probeCalls = [];
+  const probeWarnings = [];
+  let probed;
+  const beforeProbe = console.error;
+  try {
+    console.error = (...args) => probeWarnings.push(args.join(' '));
+    probed = await provider.fetch({ keywords: ['A', 'B', 'C', 'D', 'E'], max_pages: 5 }, {
+      maxPages: 1,
+      fetchJson: async (url) => {
+        probeCalls.push(url);
+        return { data: Array.from({ length: 100 }, (_, i) => mk(i)), pagination: { total: 100 } };
+      },
+    });
+  } finally {
+    console.error = beforeProbe;
+  }
+  if (probeCalls.length === 1 && probed.length === 100) {
+    pass('fetch() honors ctx.maxPages as a total page budget across keyword sweeps');
+  } else {
+    fail(`fetch() ctx.maxPages = ${JSON.stringify({ calls: probeCalls.length, jobs: probed?.length })}`);
+  }
+  if (probeWarnings.length === 0) pass('fetch() stays quiet when ctx.maxPages truncates — a probe is not a misconfiguration');
+  else fail(`probe emitted warnings: ${JSON.stringify(probeWarnings)}`);
+
   // max_pages caps the sweep and warns.
   const capCalls = [];
   const capCtx = {
@@ -178,7 +230,7 @@ try {
   } finally {
     console.error = realConsoleError;
   }
-  if (capCalls.length === 2 && capped.length === 200) pass('fetch() honors max_pages ahead of pagination.total');
+  if (capCalls.length === 2 && capped.length === 200) pass('fetch() stops a never-ending feed at max_pages');
   else fail(`fetch() cap = ${JSON.stringify({ calls: capCalls.length, jobs: capped?.length })}`);
   if (capWarnings.some((w) => w.includes('truncated at max_pages=2'))) pass('fetch() warns when max_pages truncates a keyword sweep');
   else fail(`truncation warning missing; captured = ${JSON.stringify(capWarnings)}`);

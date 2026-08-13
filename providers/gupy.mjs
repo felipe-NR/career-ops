@@ -14,9 +14,20 @@ import { fetchJsonWithRetry } from './_http.mjs';
 // One sweep therefore runs per entry keyword and the results are merged, so
 // the board surfaces employers that are not in tracked_companies at all.
 //
-// Paginated via offset/limit (limit caps at 100 server-side); `pagination.total`
-// bounds iteration. Every keyword is swept independently and results are
-// deduped by posting URL, since one posting commonly matches several keywords.
+// Paginated via offset/limit (limit caps at 100 server-side — limit=200 is a
+// 400). Every keyword is swept independently and results are deduped by posting
+// URL, since one posting commonly matches several keywords.
+//
+// `pagination.total` is NOT usable as a stop condition. The field reports the
+// page size, not the result-set size, so at limit=100 it answers 100 at every
+// offset however deep the feed goes (measured 2026-08-13: jobName=Desenvolvedor
+// returns 370 postings across 4 pages, and every one of those pages reports
+// total=100). Reading it the way a16z-speedrun-talent reads `total_pages` — a
+// page count, which is honest — broke the sweep after page 0 for every keyword
+// with 100+ results: 343 of 548 deduped postings returned, 14 of them inside the
+// active 14-day window, with `max_pages` never binding and the truncation
+// warning never printing. A short page is the only end-of-feed signal this API
+// gives, so it is the only one used below.
 //
 // Header note: the endpoint answers the project's default user-agent with no
 // Origin/Referer and no sec-ch-ua block (verified 2026-08-13 against all three
@@ -30,8 +41,9 @@ const API_HOST = 'employability-portal.gupy.io';
 const PER_PAGE = 100; // server-side maximum
 const DEFAULT_MAX_PAGES = 5; // × PER_PAGE = 500 postings per keyword
 // Runaway bound, not a coverage target — same policy as a16z-speedrun-talent
-// and workday: iteration already stops at pagination.total or a short page, so
-// on an honest feed this costs nothing.
+// and workday. Iteration stops on a short page, so on an honest feed this costs
+// nothing: the measured 10-keyword sweep needs 13 requests and no keyword gets
+// past page 4.
 const MAX_PAGES_CAP = 200;
 
 const DEFAULT_KEYWORDS = ['Desenvolvedor'];
@@ -191,13 +203,29 @@ export default {
     const state = typeof entry?.state === 'string' ? entry.state.trim() : '';
     const country = typeof entry?.country === 'string' ? entry.country.trim() : '';
 
+    // Total page budget for this call, NOT pages per keyword. This provider's
+    // unit of pagination is (keyword × page), so the per-sweep reading that
+    // single-sweep providers use (remotli, alibaba) would let a 10-keyword entry
+    // issue 10 requests under `ctx.maxPages: 1` — past verify-portals'
+    // PROBE_REQUEST_BUDGET of 4, tripping the sentinel and reporting a live
+    // board as a cut-off. With one keyword the two readings coincide.
+    //
+    // Latent, not live: verify-portals.mjs probes tracked_companies only today,
+    // and Gupy is configured under job_boards. It becomes real the moment either
+    // of those changes — the contract in providers/README.md asks for the hint
+    // to be honored regardless, and this provider was ignoring it outright.
+    const pageBudget = Number.isInteger(ctx?.maxPages) && ctx.maxPages > 0 ? ctx.maxPages : Infinity;
+    let pagesFetched = 0;
+
     // One posting routinely matches several keywords; the URL is the dedup key
     // so the merged result carries each posting exactly once.
     const seen = new Set();
     const out = [];
 
     for (const keyword of keywords) {
+      if (pagesFetched >= pageBudget) break;
       for (let page = 0; page < maxPages; page++) {
+        if (pagesFetched >= pageBudget) break;
         const params = new URLSearchParams({
           jobName: keyword,
           offset: String(page * PER_PAGE),
@@ -213,6 +241,7 @@ export default {
         // transient upstream failures so one blip mid-sweep cannot abort the
         // whole board and return nothing.
         const json = await fetchJsonWithRetry(ctx, url, { redirect: 'error' });
+        pagesFetched++;
         if (!json || !Array.isArray(json.data)) {
           throw new Error(
             `gupy: unexpected API response for "${keyword}" page ${page} — expected { data: [...] }, got keys: [${json ? Object.keys(json).join(', ') : 'null'}]`,
@@ -226,13 +255,16 @@ export default {
           out.push(normalized);
         }
 
-        // Stop at the last page: a short page, or once offset covers the total.
+        // A short page is the end of the feed — see the header note on why
+        // `pagination.total` cannot be used for this.
         if (json.data.length < PER_PAGE) break;
-        const total = json?.pagination?.total;
-        if (Number.isInteger(total) && (page + 1) * PER_PAGE >= total) break;
-        if (page + 1 >= maxPages && Number.isInteger(total) && total > maxPages * PER_PAGE) {
+        // Full page in hand with no budget left to read the next one: the feed
+        // has more and this entry's config is what stopped us. Not warned when
+        // `ctx.maxPages` did the cutting — that is a deliberate probe, not a
+        // misconfiguration.
+        if (page + 1 >= maxPages) {
           console.error(
-            `⚠️  gupy: "${keyword}" truncated at max_pages=${maxPages} (${maxPages * PER_PAGE} of ${total} postings) — raise max_pages on this entry for more`,
+            `⚠️  gupy: "${keyword}" truncated at max_pages=${maxPages} (${maxPages * PER_PAGE} postings read, feed has more) — raise max_pages on this entry for more`,
           );
         }
       }
