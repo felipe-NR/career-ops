@@ -17,6 +17,12 @@ cd career-ops
 codex
 ```
 
+Codex creates an interactive session lazily. The career-ops `SessionStart` hook
+runs when you submit the first prompt, so the startup checks and funnel appear
+before the first assistant response—not on the empty welcome screen immediately
+after `codex` launches. Use `/hooks` to review and trust the project hook if Codex
+reports that it is pending review.
+
 Codex may not expose a native `/career-ops` slash command. When it does not, ask for the same workflow in plain language:
 
 ```text

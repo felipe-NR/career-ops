@@ -67,6 +67,8 @@ Before the first message of each session (after the update check and doctor chec
 
 **If your harness already displayed it, do not repeat it.** A SessionStart hook may render the funnel directly (Claude Code uses `.claude/hooks/career-ops-startup.mjs`; Codex uses `.codex/hooks/career-ops-startup.mjs`; both emit it as `systemMessage`); in that case the hook's `additionalContext` says so explicitly and you go straight to answering the user.
 
+**Codex lifecycle caveat:** the interactive Codex CLI creates the session lazily when the first prompt is submitted. Its `SessionStart` hook therefore cannot draw on the empty welcome screen shown immediately after a bare `codex` command. It displays the funnel after the initial prompt is submitted and before the assistant's response. Do not claim that the Codex hook renders at process launch.
+
 ```
 scan (zero-token)
   ↓

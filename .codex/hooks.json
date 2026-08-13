@@ -1,8 +1,9 @@
 {
-  "description": "Show career-ops startup checks and the cost-benefit funnel in Codex.",
+  "description": "Show career-ops startup checks and the cost-benefit funnel on the first Codex turn.",
   "hooks": {
     "SessionStart": [
       {
+        "matcher": "^startup$",
         "hooks": [
           {
             "type": "command",

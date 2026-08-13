@@ -7,14 +7,16 @@ const hooksPath = join(ROOT, '.codex', 'hooks.json');
 
 try {
   const config = JSON.parse(readFileSync(hooksPath, 'utf8'));
-  const handler = config.hooks?.SessionStart?.[0]?.hooks?.[0];
+  const group = config.hooks?.SessionStart?.[0];
+  const handler = group?.hooks?.[0];
   if (
+    group?.matcher === '^startup$' &&
     handler?.type === 'command' &&
     handler.command?.includes('.codex/hooks/career-ops-startup.mjs') &&
     handler.commandWindows?.includes('.codex\\hooks\\career-ops-startup.mjs') &&
     handler.timeout >= 16
   ) {
-    pass('Codex SessionStart hook is registered for Unix and Windows with a bounded timeout');
+    pass('Codex startup-only SessionStart hook is registered for Unix and Windows with a bounded timeout');
   } else {
     fail('Codex SessionStart hook registration is incomplete');
   }
@@ -43,9 +45,10 @@ if (
   healthy.systemMessage.includes('Pipeline — Cost×Benefit Funnel') &&
   healthy.systemMessage.includes('nunca pule `triage`') &&
   healthy.hookSpecificOutput?.hookEventName === 'SessionStart' &&
-  healthy.hookSpecificOutput.additionalContext.includes('ALREADY displayed')
+  healthy.hookSpecificOutput.additionalContext.includes('ALREADY displayed') &&
+  healthy.hookSpecificOutput.additionalContext.includes('empty welcome screen')
 ) {
-  pass('Codex startup payload renders the funnel and prevents model-side duplication');
+  pass('Codex first-turn payload renders the funnel and documents lazy SessionStart timing');
 } else {
   fail('Codex healthy startup payload is missing the funnel or deduplication context');
 }

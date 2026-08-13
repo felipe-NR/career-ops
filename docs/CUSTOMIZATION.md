@@ -67,7 +67,7 @@ Career-ops can integrate with external systems via Claude Code or Codex hooks. E
 }
 ```
 
-Save hooks in `.claude/settings.json` for Claude Code. Codex discovers project hooks from `.codex/hooks.json`; on first use, review and trust the hook when Codex prompts you. OpenCode does not support hooks. For equivalent functionality, use custom commands (`.opencode/commands/`) or agents (`.opencode/agents/`) — see https://opencode.ai/docs/commands/.
+Save hooks in `.claude/settings.json` for Claude Code. Codex discovers project hooks from `.codex/hooks.json`; on first use, review and trust the hook when Codex prompts you. Interactive Codex creates a session only after the first prompt is submitted, so a `SessionStart` message appears at the start of that first turn, not on the empty welcome screen. OpenCode does not support hooks. For equivalent functionality, use custom commands (`.opencode/commands/`) or agents (`.opencode/agents/`) — see https://opencode.ai/docs/commands/.
 
 ## States (templates/states.yml)
 

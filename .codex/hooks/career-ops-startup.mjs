@@ -81,7 +81,8 @@ export function buildStartupPayload(update, doctor) {
   }
 
   const rules = [
-    'The funnel/banner above was ALREADY displayed to the user by the Codex hook itself (systemMessage).',
+    'The funnel/banner above was ALREADY displayed to the user by Codex as the first submitted prompt started (systemMessage).',
+    'Codex creates interactive sessions lazily, so SessionStart cannot render on the empty welcome screen shown before the first prompt.',
     'Do NOT reprint it, summarize it, or restate it — go straight to answering the user.',
   ];
   if (!doctorUsable) {
