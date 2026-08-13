@@ -29,9 +29,11 @@
  *   node scan.mjs --verify --throttle          # jittered ~5-10s gap between checks (stay under rate limits)
  *   node scan.mjs --verify --throttle=8000     # custom base gap in ms (waits base..2*base)
  *   node scan.mjs --include-blacklisted        # let data/blacklist.md matches through (annotated)
+ *   node scan.mjs --help                       # show this usage without scanning or writing
  */
 
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from 'fs';
+import { randomUUID } from 'crypto';
 import { pathToFileURL, fileURLToPath } from 'url';
 import path from 'path';
 import yaml from 'js-yaml';
@@ -75,15 +77,64 @@ const PIPELINE_PATH = process.env.CAREER_OPS_PIPELINE || 'data/pipeline.md';
 const APPLICATIONS_PATH = 'data/applications.md';
 const PROVIDERS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'providers');
 
-// Ensure required directories exist (fresh setup). Stays literal: the paths that
-// are NOT overridable still live here. The two that are need no equivalent -
-// scan-history creates its own parent before writing, and the pipeline's parent
-// is created by acquirePipelineLock, which runs before the first pipeline write.
-// tests/scan-output-paths.test.mjs pins that, so an override into a directory
-// that does not exist yet keeps working if either of those changes.
-mkdirSync('data', { recursive: true });
-
 const CONCURRENCY = 10;
+
+export const SCAN_USAGE = `Usage: node scan.mjs [options]
+
+Options:
+  --dry-run                 Preview without writing files
+  --company <name>          Scan one configured company or board
+  --verify                  Verify new postings with Playwright
+  --headed-fallback         Retry bot-blocked verification in a headed browser (with --verify)
+  --throttle[=<ms>]         Add a jittered gap between verification checks (with --verify)
+  --rediscover-404          Search for moved postings after a verified 404/410 (with --verify)
+  --include-blacklisted     Keep blacklist matches, annotated for review
+  --posted-after <date>     Keep postings on or after YYYY-MM-DD
+  --posted-before <date>    Keep postings on or before YYYY-MM-DD
+  --since <days>            Keep postings from the last N days
+  --help, -h                Show this help and exit without scanning
+`;
+
+const BOOLEAN_SCAN_FLAGS = new Set([
+  '--dry-run', '--verify', '--headed-fallback', '--rediscover-404', '--include-blacklisted', '--help', '-h',
+]);
+const VALUE_SCAN_FLAGS = new Set(['--company', '--posted-after', '--posted-before', '--since']);
+
+/**
+ * Reject flags that the scanner cannot honor before it performs any I/O.
+ * A silent unknown flag is dangerous here: `--help` previously became a full,
+ * mutating scan instead of a usage request.
+ *
+ * @param {string[]} args
+ * @returns {{help: boolean, error: string|null}}
+ */
+export function validateScanCliArgs(args) {
+  if (args.includes('--help') || args.includes('-h')) return { help: true, error: null };
+
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i];
+    if (!token.startsWith('--')) {
+      // A value belonging to --company/--posted-after/--posted-before/--since.
+      if (VALUE_SCAN_FLAGS.has(args[i - 1])) continue;
+      return { help: false, error: `unexpected positional argument: ${token}` };
+    }
+
+    const [flag] = token.split('=', 1);
+    if (BOOLEAN_SCAN_FLAGS.has(flag)) {
+      if (token.includes('=')) return { help: false, error: `${flag} does not accept a value` };
+      continue;
+    }
+    if (VALUE_SCAN_FLAGS.has(flag) || flag === '--throttle') continue;
+    return { help: false, error: `unknown option: ${flag}` };
+  }
+
+  return { help: false, error: null };
+}
+
+/** @returns {string} Stable, human-inspectable identifier for one scan process. */
+export function createScanRunId(now = new Date()) {
+  return `scan-${now.toISOString().replace(/[-:.]/g, '').replace('Z', 'Z')}-${randomUUID().slice(0, 8)}`;
+}
 
 // Provider loading + routing live in providers/_registry.mjs so the portal
 // health check (verify-portals.mjs) can reuse the exact same layer without
@@ -1572,8 +1623,8 @@ function postedAtIsoDate(postedAt) {
   if (typeof postedAt !== 'number' || !Number.isFinite(postedAt) || postedAt <= 0) return '';
   return new Date(postedAt).toISOString().slice(0, 10);
 }
-export function formatScanHistoryRow(offer, date, status = 'added') {
-  return [
+export function formatScanHistoryRow(offer, date, status = 'added', runId = '') {
+  const fields = [
     normalizeScanUrl(offer.url),
     date,
     offer.source,
@@ -1606,7 +1657,12 @@ export function formatScanHistoryRow(offer, date, status = 'added') {
     // cols) are unaffected, and older rows that lack it are tolerated by
     // consumers normalizing the raw name on the fly.
     normalizeCompanyName(offer.company || ''),
-  ].map(sanitizeTsvField).join('\t');
+  ];
+  // A run identifier is optional so callers outside scan.mjs keep their
+  // byte-compatible rows. The primary scanner always supplies one, letting an
+  // agent recover exactly the URLs produced by a completed run.
+  if (runId) fields.push(runId);
+  return fields.map(sanitizeTsvField).join('\t');
 }
 
 /**
@@ -1694,23 +1750,43 @@ export async function appendToPipeline(offers) {
   });
 }
 
-export function appendToScanHistory(offers, date, status = 'added') {
+function appendHeaderColumnsIfMissing(filePath, expectedFirstColumn, columns) {
+  if (!existsSync(filePath)) return;
+  const text = readFileSync(filePath, 'utf-8');
+  const match = text.match(/\r?\n/);
+  if (!match) return;
+  const lineEnd = match.index;
+  const header = text.slice(0, lineEnd);
+  if (!header.startsWith(`${expectedFirstColumn}\t`)) return;
+  const existing = new Set(header.split('\t'));
+  const missing = columns.filter(column => !existing.has(column));
+  if (missing.length === 0) return;
+  const eol = match[0];
+  writeFileSync(filePath, `${header}\t${missing.join('\t')}${eol}${text.slice(lineEnd + eol.length)}`, 'utf-8');
+}
+
+export function appendToScanHistory(offers, date, status = 'added', runId = '') {
   // Ensure file + header exist. The header names every column the row writer
   // (formatScanHistoryRow) emits, in the same order: the original 7 positional
   // cols (url…location) plus the append-only trailing cols added since —
   // fingerprint (7), posted_at (8), trust_score (9), trust_flags (10),
-  // normalized_company (11). Written ONLY on fresh-file creation; existing files
-  // (including headerless legacy files and older 7-col-header files) are never
-  // rewritten. All readers either skip line 0 unconditionally, detect the header
+  // normalized_company (11), run_id (12). Written ONLY on fresh-file creation;
+  // an older header is widened in place before its first run-tagged append.
+  // Existing data rows (including headerless legacy files and older 7-col-header
+  // files) are never rewritten. All readers either skip line 0 unconditionally, detect the header
   // by its `url\t` prefix, or skip non-URL col-0 rows, so widening it stays
   // backward-compatible. `status` is parameterized so callers can record verify
   // outcomes (`skipped_expired`, etc.) without the legacy `(expired)` suffix.
   if (!existsSync(SCAN_HISTORY_PATH)) {
     mkdirSync(path.dirname(SCAN_HISTORY_PATH), { recursive: true });
-    writeFileSync(SCAN_HISTORY_PATH, 'url\tfirst_seen\tportal\ttitle\tcompany\tstatus\tlocation\tfingerprint\tposted_at\ttrust_score\ttrust_flags\tnormalized_company\n', 'utf-8');
+    writeFileSync(SCAN_HISTORY_PATH, 'url\tfirst_seen\tportal\ttitle\tcompany\tstatus\tlocation\tfingerprint\tposted_at\ttrust_score\ttrust_flags\tnormalized_company\trun_id\n', 'utf-8');
+  } else if (runId) {
+    appendHeaderColumnsIfMissing(SCAN_HISTORY_PATH, 'url', [
+      'fingerprint', 'posted_at', 'trust_score', 'trust_flags', 'normalized_company', 'run_id',
+    ]);
   }
 
-  const lines = offers.map(o => formatScanHistoryRow(o, date, status)).join('\n') + '\n';
+  const lines = offers.map(o => formatScanHistoryRow(o, date, status, runId)).join('\n') + '\n';
 
   appendFileSync(SCAN_HISTORY_PATH, lines, 'utf-8');
 }
@@ -1774,10 +1850,15 @@ const SCAN_RUNS_PATH = 'data/scan-runs.tsv';
 // 'completed' in v1; a follow-up wires failure-path writes so trend stats can
 // exclude survivorship bias. Consumers MUST parse by header name, never by
 // position — columns may be appended in later versions.
-export const SCAN_RUNS_HEADER = 'timestamp\tstatus\tcompanies\tboards\tfound\tfiltered_title\tfiltered_tier\tfiltered_location\tfiltered_posting_age\tfiltered_salary\tfiltered_content\tfiltered_cooldown\tdupes\tnew_added\terrors\tfiltered_blacklist\tfiltered_visa\tfiltered_posted_date\tfiltered_country_eligibility\n';
+export const SCAN_RUNS_HEADER = 'timestamp\tstatus\tcompanies\tboards\tfound\tfiltered_title\tfiltered_tier\tfiltered_location\tfiltered_posting_age\tfiltered_salary\tfiltered_content\tfiltered_cooldown\tdupes\tnew_added\terrors\tfiltered_blacklist\tfiltered_visa\tfiltered_posted_date\tfiltered_country_eligibility\trun_id\n';
 
 export function appendScanRunSummary(c, filePath = SCAN_RUNS_PATH) {
   if (!existsSync(filePath)) writeFileSync(filePath, SCAN_RUNS_HEADER, 'utf-8');
+  else if (c.runId) appendHeaderColumnsIfMissing(filePath, 'timestamp', [
+    'filtered_title', 'filtered_tier', 'filtered_location', 'filtered_posting_age', 'filtered_salary',
+    'filtered_content', 'filtered_cooldown', 'dupes', 'new_added', 'errors', 'filtered_blacklist',
+    'filtered_visa', 'filtered_posted_date', 'filtered_country_eligibility', 'run_id',
+  ]);
   const row = [
     c.timestamp, c.status ?? 'completed', c.companies, c.boards, c.found,
     c.filteredTitle, c.filteredTier, c.filteredLocation, c.filteredPostingAge,
@@ -1792,6 +1873,8 @@ export function appendScanRunSummary(c, filePath = SCAN_RUNS_PATH) {
     c.filteredPostedDate ?? 0,
     // filtered_country_eligibility (#2093) appended at the END for the same reason.
     c.filteredCountryEligibility ?? 0,
+    // `run_id` identifies the exact history rows created by this completed run.
+    c.runId ?? '',
   ].join('\t') + '\n';
   appendFileSync(filePath, row, 'utf-8');
 }
@@ -1990,6 +2073,22 @@ function guardStatusFor(code) {
 
 async function main() {
   const args = process.argv.slice(2);
+  const cli = validateScanCliArgs(args);
+  if (cli.help) {
+    process.stdout.write(SCAN_USAGE);
+    return;
+  }
+  if (cli.error) {
+    console.error(`Error: ${cli.error}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Delay this write until after the non-mutating CLI exits above. `--help`
+  // and malformed invocations must be safe to run in any directory.
+  mkdirSync('data', { recursive: true });
+  const scanStartedAt = new Date();
+  const runId = createScanRunId(scanStartedAt);
   const dryRun = args.includes('--dry-run');
   const verify = args.includes('--verify');
   // Opt-in: on an anti-bot challenge (e.g. pracuj.pl Cloudflare wall), retry the
@@ -2178,6 +2277,7 @@ async function main() {
   parts.push(`${localParserCount} local parser`);
   parts.push(`${skippedCount} skipped — no provider matched`);
   console.log(`Scanning ${parts.join('; ')} via providers`);
+  console.log(`Run ID: ${runId}`);
   if (dryRun) console.log('(dry run — no files will be written)\n');
 
   // 3.5. Load the user's do-not-apply list (#1742). Opt-in: absent file =
@@ -2398,7 +2498,7 @@ async function main() {
   // 6. Write results
   if (!dryRun && verifiedOffers.length > 0) {
     await appendToPipeline(verifiedOffers);
-    appendToScanHistory(verifiedOffers, date);
+    appendToScanHistory(verifiedOffers, date, 'added', runId);
   }
   if (!dryRun && cooldownOffers.length > 0) {
     const cooldownGroups = {};
@@ -2409,7 +2509,7 @@ async function main() {
       cooldownGroups[item.status].push(item.job);
     }
     for (const [status, group] of Object.entries(cooldownGroups)) {
-      appendToScanHistory(group, date, status);
+      appendToScanHistory(group, date, status, runId);
     }
   }
   // Expired postings — plus the old URLs of migrated offers — are recorded as
@@ -2419,12 +2519,12 @@ async function main() {
     ...migratedOffers.map(o => ({ ...o, url: o.previousUrl })),
   ];
   if (!dryRun && expiredForHistory.length > 0) {
-    appendToScanHistory(expiredForHistory, date, 'skipped_expired');
+    appendToScanHistory(expiredForHistory, date, 'skipped_expired', runId);
   }
   // Pages that loaded but had no Apply control: record so we don't re-verify
   // them next scan, but never let them reach pipeline.md.
   if (!dryRun && droppedOffers.length > 0) {
-    appendToScanHistory(droppedOffers, date, 'skipped_no_apply_control');
+    appendToScanHistory(droppedOffers, date, 'skipped_no_apply_control', runId);
   }
   // Guard-rejected URLs (invalid / unsupported protocol / blocked host) are
   // recorded with a precise status so subsequent scans dedup-skip them via
@@ -2438,7 +2538,7 @@ async function main() {
       byStatus.get(status).push(o);
     }
     for (const [status, group] of byStatus) {
-      appendToScanHistory(group, date, status);
+      appendToScanHistory(group, date, status, runId);
     }
   }
 
@@ -2648,6 +2748,7 @@ async function main() {
       filteredVisa: totalFilteredVisa,
       filteredPostedDate: totalFilteredPostedDate,
       filteredCountryEligibility: totalFilteredCountryEligibility,
+      runId,
     });
   }
 
