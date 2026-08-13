@@ -408,6 +408,15 @@ const USER_PATHS = [
   'opencode.json',
   '.claude/settings.json',
   '.claude/hooks/',
+  // batch/* is system layer, but these two are a local runner variant that
+  // exists only in this fork (per-report CV paths + JD pre-extraction). They
+  // have no upstream counterpart, so SYSTEM_PATHS would make `apply` fetch a
+  // path the remote does not have — and silently overwrite them if upstream
+  // ever claims those names. User layer keeps them protected instead.
+  // Exact paths, not a `batch/.runtime-` prefix: the coverage validator only
+  // prefix-matches entries ending in `/`.
+  'batch/.runtime-prompt-report-paths.md',
+  'batch/.runtime-runner-report-paths.sh',
 ];
 
 function parseVersionFile(raw) {
