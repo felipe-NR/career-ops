@@ -1,5 +1,6 @@
 // @ts-check
 import { fetchJsonWithRetry } from './_http.mjs';
+import { resolveProfileKeywords } from './_profile-keywords.mjs';
 
 /** @typedef {import('./_types.js').Provider} Provider */
 
@@ -33,8 +34,17 @@ import { fetchJsonWithRetry } from './_http.mjs';
 // Origin/Referer and no sec-ch-ua block (verified 2026-08-13 against all three
 // header sets). No browser impersonation is needed here.
 //
+// The feed is ordered publishedDate-descending and that ordering holds ACROSS
+// pages (verified 2026-08-13: page 0 ends on the same date page 1 opens with),
+// so a recency window can stop a sweep early — the workday.mjs pattern. The
+// window comes from `ctx.sinceMs` (the run's --since/--posted-after) or, when
+// the run states none, from this entry's own `since_days`.
+//
 // Wire in via a `job_boards:` entry with `provider: gupy`, or point
-// `careers_url` at https://portal.gupy.io (auto-detected).
+// `careers_url` at https://portal.gupy.io (auto-detected). Recognized entry
+// keys: `keywords` (falls back to config/profile.yml target_roles), `q`,
+// `since_days`, `max_pages`, `workplace_types`, `job_types`, `state`,
+// `country`.
 
 const API_BASE = 'https://employability-portal.gupy.io/api/v1/jobs';
 const API_HOST = 'employability-portal.gupy.io';
@@ -46,7 +56,11 @@ const DEFAULT_MAX_PAGES = 5; // × PER_PAGE = 500 postings per keyword
 // past page 4.
 const MAX_PAGES_CAP = 200;
 
-const DEFAULT_KEYWORDS = ['Desenvolvedor'];
+// Same margin workday.mjs uses: stop a safe distance PAST the floor so a feed
+// that is not perfectly monotonic can never strand an eligible posting on an
+// unfetched page. Gupy's ordering measured strictly descending across pages on
+// 2026-08-13, so this costs at most one extra page per keyword.
+const EARLY_STOP_MARGIN_MS = 2 * 86_400_000;
 
 /** Hosts a Gupy posting URL is allowed to live on. */
 function isSafeGupyUrl(value) {
@@ -86,6 +100,11 @@ function resolveMaxPages(entry) {
  * Keywords to sweep. Unlike a16z-speedrun-talent — which joins keywords into a
  * single full-text `q` — Gupy's jobName is a narrow title match, so each
  * keyword needs its own sweep or the terms would AND together and return ~0.
+ *
+ * Falls back to config/profile.yml's target_roles (the vdab.mjs pattern) when
+ * the entry declares none. This used to be a hardcoded ['Desenvolvedor'] — a
+ * pt-BR targeting decision baked into a system-layer file, which silently swept
+ * one keyword for every user who had not filled the entry in.
  */
 function resolveKeywords(entry) {
   if (Array.isArray(entry?.keywords)) {
@@ -93,7 +112,61 @@ function resolveKeywords(entry) {
     if (list.length > 0) return list;
   }
   if (typeof entry?.q === 'string' && entry.q.trim()) return [entry.q.trim()];
-  return DEFAULT_KEYWORDS;
+  return resolveProfileKeywords();
+}
+
+/**
+ * This entry's own recency window in days, or null when unset.
+ *
+ * Exists because scan.mjs's `max_posting_age_days` is GLOBAL: switching on a
+ * 14-day window for a board-wide sweep used to mean either narrowing every
+ * tracked company to 14 days as well, or passing `--since 14` on the command
+ * line for the whole run. A per-entry window is the same thing vdab.mjs's
+ * `vdab.days` expresses, scoped where it belongs.
+ */
+function resolveSinceDays(entry) {
+  const v = entry?.since_days;
+  return Number.isInteger(v) && v > 0 ? v : null;
+}
+
+/**
+ * Turn a day count into an absolute floor, truncated to UTC midnight.
+ *
+ * Truncated on purpose, to be byte-identical with what `--since` means:
+ * scan.mjs's resolveEffectiveAfter does the same, "marginally more permissive,
+ * which is the safe direction for a bound that also stops pagination". An exact
+ * `now - days` timestamp would also make the same config return different
+ * results depending on the hour the scan happened to run.
+ *
+ * Returns null for a day count large enough to leave the representable Date
+ * range, rather than propagating an Invalid Date into the comparison.
+ *
+ * @param {number|null} days
+ * @param {number} [now] - Injectable clock for tests.
+ * @returns {number|null}
+ */
+export function sinceDaysToCutoffMs(days, now = Date.now()) {
+  if (days === null) return null;
+  const d = new Date(now - days * 86_400_000);
+  if (Number.isNaN(d.getTime())) return null;
+  return Date.parse(`${d.toISOString().slice(0, 10)}T00:00:00Z`);
+}
+
+/**
+ * True once a page's oldest unambiguously-dated posting is past the window.
+ *
+ * Undated postings are invisible here (the `dated.length === 0` guard), so a
+ * page of nothing but undated postings never stops pagination. Mirrors
+ * workday.mjs's function of the same name. Exported for the test suite.
+ *
+ * @param {Array<{postedAt?: number}>} pageJobs
+ * @param {number|null} cutoffMs
+ */
+export function pageIsPastWindow(pageJobs, cutoffMs) {
+  if (typeof cutoffMs !== 'number') return false;
+  const dated = pageJobs.map((j) => j?.postedAt).filter((v) => typeof v === 'number');
+  if (dated.length === 0) return false;
+  return Math.min(...dated) < cutoffMs - EARLY_STOP_MARGIN_MS;
 }
 
 /** Comma-joined list param, or null when unset — mirrors the platform's format. */
@@ -198,6 +271,11 @@ export default {
     assertApiUrl(API_BASE);
     const maxPages = resolveMaxPages(entry);
     const keywords = resolveKeywords(entry);
+    if (keywords.length === 0) {
+      throw new Error(
+        `gupy: entry "${entry?.name || '(unnamed)'}" has no keywords[]/q: and no config/profile.yml target_roles to fall back to`,
+      );
+    }
     const workplaceTypes = listParam(entry?.workplace_types);
     const jobTypes = listParam(entry?.job_types);
     const state = typeof entry?.state === 'string' ? entry.state.trim() : '';
@@ -216,6 +294,22 @@ export default {
     // to be honored regardless, and this provider was ignoring it outright.
     const pageBudget = Number.isInteger(ctx?.maxPages) && ctx.maxPages > 0 ? ctx.maxPages : Infinity;
     let pagesFetched = 0;
+
+    // Recency window. `ctx.sinceMs` — the run's own window, from --since or
+    // --posted-after — wins when present: an operator who widened the run to 30
+    // days must not silently get this entry's 14. `since_days` is the entry's
+    // default for the runs that state no window at all, which is most of them
+    // (resolveEarlyStopMs returns null without a CLI flag).
+    //
+    // Only the entry's own window FILTERS. A ctx window is early-stop only,
+    // exactly as workday.mjs treats it: scan.mjs applies postedDateFilter /
+    // postingAgeFilter downstream, and re-deriving those floors here risks
+    // sub-second clock drift dropping a boundary posting the scanner wanted.
+    // Nothing downstream knows about since_days, so that one must filter.
+    const ctxCutoff = typeof ctx?.sinceMs === 'number' ? ctx.sinceMs : null;
+    const entryCutoff = sinceDaysToCutoffMs(resolveSinceDays(entry));
+    const cutoffMs = ctxCutoff ?? entryCutoff;
+    const filterCutoff = ctxCutoff === null ? entryCutoff : null;
 
     // One posting routinely matches several keywords; the URL is the dedup key
     // so the merged result carries each posting exactly once.
@@ -248,16 +342,28 @@ export default {
           );
         }
 
+        const pageJobs = [];
         for (const raw of json.data) {
           const normalized = normalizeGupyApiJob(raw);
-          if (!normalized || seen.has(normalized.url)) continue;
+          if (!normalized) continue;
+          pageJobs.push(normalized);
+          if (seen.has(normalized.url)) continue;
           seen.add(normalized.url);
+          // Undated postings pass the window — same "don't penalize missing
+          // data" convention scan.mjs's date filters use.
+          if (filterCutoff !== null && typeof normalized.postedAt === 'number'
+              && normalized.postedAt < filterCutoff) {
+            continue;
+          }
           out.push(normalized);
         }
 
         // A short page is the end of the feed — see the header note on why
         // `pagination.total` cannot be used for this.
         if (json.data.length < PER_PAGE) break;
+        // Newest-first ordering (verified stable across pages) means once a
+        // whole page sits past the window, every later page does too.
+        if (pageIsPastWindow(pageJobs, cutoffMs)) break;
         // Full page in hand with no budget left to read the next one: the feed
         // has more and this entry's config is what stopped us. Not warned when
         // `ctx.maxPages` did the cutting — that is a deliberate probe, not a

@@ -281,14 +281,136 @@ try {
   if (threw && threw.includes('unexpected API response')) pass('fetch() throws on a malformed payload instead of returning a silent partial');
   else fail(`malformed payload handling = ${JSON.stringify(threw)}`);
 
-  // Default keyword keeps an entry with no keywords/q usable.
+  // Keywords fall back to config/profile.yml target_roles (the vdab.mjs
+  // pattern) instead of a hardcoded ['Desenvolvedor'] — a pt-BR targeting
+  // decision that used to live in this system-layer file.
+  const profileKeywords = (await import(pathToFileURL(join(ROOT, 'providers/_profile-keywords.mjs')).href))
+    .resolveProfileKeywords(join(ROOT, 'config/profile.yml'));
   const defCalls = [];
   const defCtx = { fetchJson: async (url) => { defCalls.push(url); return { data: [], pagination: { total: 0 } }; } };
-  await provider.fetch({ name: 'Gupy', max_pages: 1 }, defCtx);
-  if (defCalls.length === 1 && new URL(defCalls[0]).searchParams.get('jobName') === 'Desenvolvedor') {
-    pass('fetch() falls back to the default keyword when neither keywords[] nor q: is set');
+  let defThrew = null;
+  try {
+    await provider.fetch({ name: 'Gupy', max_pages: 1 }, defCtx);
+  } catch (err) {
+    defThrew = err.message;
+  }
+  const defNames = defCalls.map((u) => new URL(u).searchParams.get('jobName'));
+  if (profileKeywords.length > 0) {
+    // This repo has a profile — the fallback must use it verbatim.
+    if (defThrew === null && defNames.length === profileKeywords.length
+        && defNames.every((n, i) => n === profileKeywords[i])) {
+      pass('fetch() falls back to config/profile.yml target_roles when neither keywords[] nor q: is set');
+    } else {
+      fail(`profile fallback = ${JSON.stringify({ defThrew, defNames, profileKeywords })}`);
+    }
+  } else if (defThrew && defThrew.includes('no keywords[]/q:')) {
+    // No profile on this machine — must fail loudly, never sweep a guessed term.
+    pass('fetch() throws when there are no keywords[]/q: and no profile target_roles to fall back to');
   } else {
-    fail(`default keyword = ${JSON.stringify(defCalls.map((u) => new URL(u).searchParams.get('jobName')))}`);
+    fail(`profile fallback (no profile) = ${JSON.stringify({ defThrew, defNames })}`);
+  }
+
+  // Explicit keywords[] always beat the profile fallback.
+  const overrideCalls = [];
+  await provider.fetch({ keywords: ['Só Esta'], max_pages: 1 }, {
+    fetchJson: async (url) => { overrideCalls.push(url); return { data: [], pagination: { total: 0 } }; },
+  });
+  if (overrideCalls.length === 1 && new URL(overrideCalls[0]).searchParams.get('jobName') === 'Só Esta') {
+    pass('fetch() prefers the entry keywords[] over the profile fallback');
+  } else {
+    fail(`keyword override = ${JSON.stringify(overrideCalls.map((u) => new URL(u).searchParams.get('jobName')))}`);
+  }
+
+  // ── recency window ───────────────────────────────────────────────────────
+  const DAY = 86_400_000;
+  const dated = (i, ageDays) => ({
+    name: `Role ${i}`,
+    jobUrl: `https://acme.gupy.io/job/w${i}`,
+    careerPageName: 'Co',
+    workplaceType: 'remote',
+    publishedDate: new Date(Date.now() - ageDays * DAY).toISOString(),
+  });
+
+  // since_days is the entry's OWN window: it must both stop the sweep and drop
+  // the stale tail of the last page, because nothing downstream knows about it.
+  const winCalls = [];
+  const windowed = await provider.fetch({ keywords: ['X'], since_days: 14, max_pages: 5 }, {
+    fetchJson: async (url) => {
+      winCalls.push(url);
+      const offset = Number(new URL(url).searchParams.get('offset'));
+      // Page 0: half inside the window, half far outside it. Page 1 would be
+      // older still — the sweep must never ask for it.
+      const data = Array.from({ length: 100 }, (_, i) => dated(offset + i, offset + i < 50 ? 3 : 90));
+      return { data, pagination: { total: 100 } };
+    },
+  });
+  if (winCalls.length === 1 && windowed.length === 50) {
+    pass('since_days stops the sweep at the window edge and drops the stale tail of the page');
+  } else {
+    fail(`since_days = ${JSON.stringify({ calls: winCalls.length, jobs: windowed.length })}`);
+  }
+
+  // ctx.sinceMs is the RUN's window and wins over since_days — an operator who
+  // widened the run must not silently get the entry's narrower default.
+  const ctxWinCalls = [];
+  const ctxWindowed = await provider.fetch({ keywords: ['X'], since_days: 14, max_pages: 5 }, {
+    sinceMs: Date.now() - 60 * DAY,
+    fetchJson: async (url) => {
+      ctxWinCalls.push(url);
+      const offset = Number(new URL(url).searchParams.get('offset'));
+      const data = Array.from({ length: offset === 0 ? 100 : 10 }, (_, i) => dated(offset + i, 30));
+      return { data, pagination: { total: 100 } };
+    },
+  });
+  if (ctxWinCalls.length === 2 && ctxWindowed.length === 110) {
+    pass('ctx.sinceMs overrides since_days — postings inside the run window survive the entry default');
+  } else {
+    fail(`ctx.sinceMs precedence = ${JSON.stringify({ calls: ctxWinCalls.length, jobs: ctxWindowed.length })}`);
+  }
+
+  // A ctx window is early-stop ONLY. scan.mjs applies postedDateFilter itself,
+  // and re-deriving that floor here risks sub-second drift dropping a boundary
+  // posting the scanner wanted.
+  const ctxNoFilter = await provider.fetch({ keywords: ['X'], max_pages: 1 }, {
+    sinceMs: Date.now() - 14 * DAY,
+    fetchJson: async () => ({ data: [dated(1, 3), dated(2, 400)], pagination: { total: 2 } }),
+  });
+  if (ctxNoFilter.length === 2) pass('ctx.sinceMs never filters postings out — it only stops pagination');
+  else fail(`ctx.sinceMs filtering = ${JSON.stringify(ctxNoFilter.map((j) => j.url))}`);
+
+  // Undated postings pass the window (scan.mjs's "don't penalize missing data").
+  const undated = await provider.fetch({ keywords: ['X'], since_days: 14, max_pages: 1 }, {
+    fetchJson: async () => ({
+      data: [{ name: 'No date', jobUrl: 'https://acme.gupy.io/job/nd', careerPageName: 'Co' }, dated(9, 400)],
+      pagination: { total: 2 },
+    }),
+  });
+  if (undated.length === 1 && undated[0].url === 'https://acme.gupy.io/job/nd') {
+    pass('since_days keeps undated postings and drops the dated ones outside the window');
+  } else {
+    fail(`undated handling = ${JSON.stringify(undated.map((j) => j.url))}`);
+  }
+
+  // since_days must mean exactly what --since means: a floor truncated to UTC
+  // midnight (scan.mjs's resolveEffectiveAfter). An exact `now - days` stamp
+  // would make the same config return different results by the hour.
+  const noonUtc = Date.parse('2026-08-13T12:34:56Z');
+  const cutoff14 = mod.sinceDaysToCutoffMs(14, noonUtc);
+  if (cutoff14 === Date.parse('2026-07-30T00:00:00Z')
+      && mod.sinceDaysToCutoffMs(null, noonUtc) === null
+      && mod.sinceDaysToCutoffMs(1e15, noonUtc) === null) {
+    pass('sinceDaysToCutoffMs truncates to UTC midnight like --since, and survives an out-of-range day count');
+  } else {
+    fail(`sinceDaysToCutoffMs = ${JSON.stringify({ cutoff14, iso: cutoff14 && new Date(cutoff14).toISOString() })}`);
+  }
+
+  // A page of nothing but undated postings must not stop pagination.
+  if (mod.pageIsPastWindow([{ }, { }], Date.now()) === false
+      && mod.pageIsPastWindow([dated(1, 400)].map((d) => ({ postedAt: Date.parse(d.publishedDate) })), Date.now()) === true
+      && mod.pageIsPastWindow([{ postedAt: Date.now() }], null) === false) {
+    pass('pageIsPastWindow ignores undated pages, trips on a fully stale one, and no-ops without a window');
+  } else {
+    fail('pageIsPastWindow behaviour drifted');
   }
 
   // q: accepted as a single-keyword form.
