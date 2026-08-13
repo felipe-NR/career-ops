@@ -417,6 +417,11 @@ const USER_PATHS = [
   // prefix-matches entries ending in `/`.
   'batch/.runtime-prompt-report-paths.md',
   'batch/.runtime-runner-report-paths.sh',
+  // Root *.mjs is normally system layer, but this bridge exists only in this
+  // fork: it joins data/scan-history.tsv to discover-ats.mjs so scanner-found
+  // companies can be promoted into portals.yml. No upstream counterpart, so
+  // SYSTEM_PATHS would make `apply` fetch a path the remote does not have.
+  'discover-new-companies.mjs',
 ];
 
 function parseVersionFile(raw) {
