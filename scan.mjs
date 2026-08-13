@@ -1034,6 +1034,75 @@ const DEDUP_STRIP_PARAMS = new Set([
  * @param {string} url
  * @returns {string}
  */
+/**
+ * Per-entry fan-out caps, applied AFTER title/location/date filtering and
+ * dedup — the position the retired Gupy bridge's limitOffers occupied before
+ * that scanner was internalized as `providers/gupy.mjs` (2026-08-13).
+ *
+ * Why this lives here and not inside a provider: a provider only sees raw
+ * postings, so capping there would spend the budget before the filters ran and
+ * let 20 rejected postings starve the good ones. Board-wide sources (gupy,
+ * a16z-speedrun-talent, cryptocurrencyjobs) sweep whole platforms, so without a
+ * cap one run can flood data/pipeline.md with hundreds of URLs.
+ *
+ * Opt-in per entry: an entry with neither key set is never capped, so existing
+ * per-company configs behave exactly as before.
+ *
+ * Newest-first ordering means the cap keeps the freshest postings; undated ones
+ * sort last rather than being dropped outright.
+ *
+ * @param {Array<object>} offers Offers already filtered and deduped.
+ * @param {(name: string) => {maxTotal?: number, maxPerCompany?: number}} capsFor
+ *   Resolves an entry name to its caps. Return {} for uncapped entries.
+ * @returns {{selected: Array<object>, skipped: Array<object>}}
+ */
+export function limitOffersPerEntry(offers, capsFor) {
+  const selected = [];
+  const skipped = [];
+  const perEntryCounts = new Map();
+  const perEntryCompanyCounts = new Map();
+
+  // Newest first; undated (postedAt undefined) sink to the end.
+  const sorted = [...offers].sort((a, b) => (b.postedAt || 0) - (a.postedAt || 0));
+
+  for (const offer of sorted) {
+    const entryName = offer._entryName || '';
+    const caps = capsFor(entryName) || {};
+    const maxTotal = Number.isInteger(caps.maxTotal) && caps.maxTotal >= 0 ? caps.maxTotal : null;
+    const maxPerCompany = Number.isInteger(caps.maxPerCompany) && caps.maxPerCompany >= 0 ? caps.maxPerCompany : null;
+
+    if (maxTotal === null && maxPerCompany === null) {
+      selected.push(offer);
+      continue;
+    }
+
+    const total = perEntryCounts.get(entryName) || 0;
+    if (maxTotal !== null && total >= maxTotal) {
+      skipped.push(offer);
+      continue;
+    }
+
+    // A missing company label must not collapse unrelated employers into one
+    // synthetic bucket that exhausts the per-company allowance together.
+    const companyKey = normalizeCompany(offer.company || '')
+      || `unknown:${normalizeUrlForDedup(offer.url || offer.title || String(selected.length))}`;
+    if (maxPerCompany !== null) {
+      if (!perEntryCompanyCounts.has(entryName)) perEntryCompanyCounts.set(entryName, new Map());
+      const byCompany = perEntryCompanyCounts.get(entryName);
+      const count = byCompany.get(companyKey) || 0;
+      if (count >= maxPerCompany) {
+        skipped.push(offer);
+        continue;
+      }
+      byCompany.set(companyKey, count + 1);
+    }
+
+    perEntryCounts.set(entryName, total + 1);
+    selected.push(offer);
+  }
+  return { selected, skipped };
+}
+
 export function normalizeUrlForDedup(url) {
   if (typeof url !== 'string' || !url) return url;
   let parsed;
@@ -2352,6 +2421,9 @@ async function main() {
           source: sourceName,
           tracked: Boolean(careersUrlDomain),
           careersUrlDomain,
+          // Which portals.yml entry produced this offer — the key the per-entry
+          // fan-out caps group by (limitOffersPerEntry).
+          _entryName: company.name,
         });
       }
     } catch (err) {
@@ -2364,6 +2436,21 @@ async function main() {
   });
 
   await parallelFetch(tasks, CONCURRENCY);
+
+  // 5.4. Per-entry fan-out caps — applied after filtering and dedup, and BEFORE
+  // liveness verification so a board-wide sweep cannot make Playwright walk
+  // hundreds of postings only to discard all but the cap. Opt-in: entries with
+  // neither key set pass through untouched.
+  const capIndex = new Map(
+    targets.map(t => [t.name, {
+      maxTotal: Number.isInteger(t.max_new_per_run) ? t.max_new_per_run : undefined,
+      maxPerCompany: Number.isInteger(t.max_per_company) ? t.max_per_company : undefined,
+    }]),
+  );
+  const { selected: cappedOffers, skipped: capSkipped } =
+    limitOffersPerEntry(newOffers, name => capIndex.get(name) || {});
+  newOffers.length = 0;
+  newOffers.push(...cappedOffers);
 
   // 5.5. Optional liveness verification — drop expired and guard-rejected postings
   let verifiedOffers = newOffers;
@@ -2509,6 +2596,9 @@ async function main() {
     console.log(`Rediscovered (moved):  ${migratedOffers.length} migrated`);
     console.log(`No apply control:      ${droppedOffers.length} dropped`);
     console.log(`Invalid (guarded):     ${invalidOffers.length} dropped`);
+  }
+  if (capSkipped.length > 0) {
+    console.log(`Held by entry cap:     ${capSkipped.length} (max_new_per_run / max_per_company)`);
   }
   console.log(`New offers added:      ${verifiedOffers.length}`);
 
