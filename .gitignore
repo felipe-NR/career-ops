@@ -122,6 +122,10 @@ opencode.json
 # personal server credentials (e.g. a plugin's API token) once a user adds
 # an MCP server, same risk class as .env.
 .mcp.json
+# ai-memory per-checkout config (workspace name + [capture].ignore_paths).
+# Machine-local: names the memory workspace on THIS host and the paths whose
+# file-tool events are dropped before capture. Not portable to another clone.
+.ai-memory.toml
 career-dashboard
 career-dashboard.exe
 package-lock.json
