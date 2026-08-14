@@ -8,7 +8,12 @@ console.log('\nProvider — gupy');
 try {
   const mod = await import(pathToFileURL(join(ROOT, 'providers/gupy.mjs')).href);
   const provider = mod.default;
-  const { normalizeGupyApiJob, buildGupyLocation, parseGupyCareerPageCompany } = mod;
+  const {
+    normalizeGupyApiJob,
+    buildGupyLocation,
+    parseGupyCareerPageCompany,
+    chooseGupyCompanyName,
+  } = mod;
 
   if (provider.id === 'gupy') pass('gupy.id is "gupy"');
   else fail(`gupy.id is ${JSON.stringify(provider.id)}`);
@@ -115,6 +120,32 @@ try {
     pass('parseGupyCareerPageCompany fails open on absent, malformed, or non-string HTML');
   } else {
     fail('parseGupyCareerPageCompany malformed-input handling drifted');
+  }
+
+  const correctedLabels = [
+    ['VENHA SER #SANGUELARANJA 🧡🚀', 'FCamara', 'FCamara'],
+    ['Carreiras SoftExpert', 'SoftExpert', 'SoftExpert'],
+    ['Faça parte do time do Shop Mercantil', 'Shop Mercantil', 'Shop Mercantil'],
+    ['Aviator, Asas para Voar.', 'Aviator', 'Aviator'],
+    ['Cresol Oficial', 'Cresol', 'Cresol'],
+  ];
+  const guardedLabels = [
+    ['Eletromidia', 'Carreiras Eletromidia', 'Eletromidia'],
+    ['Grupo Suno', 'Sunojobs', 'Grupo Suno'],
+    ['INFLOR', 'INFLOR - Evolução por Natureza', 'INFLOR'],
+    ['Globalweb', 'Seja Globalweb', 'Globalweb'],
+    ['Company Hero', 'Vagas Company Hero', 'Company Hero'],
+    ['Fundação Dom Cabral', 'FUNDACAO DOM CABRAL', 'Fundação Dom Cabral'],
+  ];
+  if (correctedLabels.every(([list, page, expected]) => chooseGupyCompanyName(list, page) === expected)) {
+    pass('chooseGupyCompanyName replaces slogans/recruiting labels with a stronger page name');
+  } else {
+    fail(`chooseGupyCompanyName corrections = ${JSON.stringify(correctedLabels.map(([list, page]) => chooseGupyCompanyName(list, page)))}`);
+  }
+  if (guardedLabels.every(([list, page, expected]) => chooseGupyCompanyName(list, page) === expected)) {
+    pass('chooseGupyCompanyName keeps a clean list label when careerPage.name is noisier or only cosmetically different');
+  } else {
+    fail(`chooseGupyCompanyName guards = ${JSON.stringify(guardedLabels.map(([list, page]) => chooseGupyCompanyName(list, page)))}`);
   }
 
   // ── detect() ─────────────────────────────────────────────────────────────

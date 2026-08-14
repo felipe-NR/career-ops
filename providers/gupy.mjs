@@ -240,6 +240,49 @@ export function parseGupyCareerPageCompany(html) {
   }
 }
 
+/** Fold a label for recruiting-copy detection without changing its output. */
+function foldCompanyLabel(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+/**
+ * Gupy exposes two user-authored labels, so neither is universally canonical.
+ * Prefer the SSR page name when it removes obvious recruitment copy, or when
+ * it is materially shorter without introducing such copy. Conversely, retain
+ * the list label when the page name itself starts with "Carreiras", "Vagas",
+ * "Seja", etc. This avoids turning good labels such as "Eletromidia" into
+ * "Carreiras Eletromidia" while still fixing FCamara's publication slogan.
+ *
+ * @param {unknown} listLabel `careerPageName` from the board-wide API.
+ * @param {unknown} pageName `careerPage.name` from the SSR page.
+ * @returns {string}
+ */
+export function chooseGupyCompanyName(listLabel, pageName) {
+  const list = typeof listLabel === 'string' ? listLabel.trim() : '';
+  const page = typeof pageName === 'string' ? pageName.trim() : '';
+  if (!page) return list;
+  if (!list || list === page) return page;
+
+  const looksRecruiting = (value) => {
+    const folded = foldCompanyLabel(value);
+    return /(?:^|\W)(?:carreiras?|vagas?|jobs?|vem ser|venha ser|faca parte|recrutamento para|seja)(?:\W|$)/.test(folded)
+      || /jobs?$/.test(folded);
+  };
+  const listIsRecruiting = looksRecruiting(list);
+  const pageIsRecruiting = looksRecruiting(page);
+  if (listIsRecruiting !== pageIsRecruiting) return listIsRecruiting ? page : list;
+
+  // When both labels look equally brand-like, a page name at least 20% shorter
+  // usually removes a slogan/legal suffix ("Aviator, Asas para Voar." →
+  // "Aviator"; "Cresol Oficial" → "Cresol"). Close calls retain the API label
+  // rather than churning established history for cosmetic differences.
+  if (!pageIsRecruiting && page.length <= list.length * 0.8) return page;
+  return list;
+}
+
 /**
  * Resolve the canonical employer label once per distinct Gupy board.
  *
@@ -286,9 +329,9 @@ async function resolveCanonicalCompanies(jobs, ctx) {
           redirect: 'error',
           headers: { accept: 'text/html' },
         });
-        const canonical = parseGupyCareerPageCompany(html);
-        if (!canonical) continue;
-        for (const job of boardJobs) job.company = canonical;
+        const pageName = parseGupyCareerPageCompany(html);
+        if (!pageName) continue;
+        for (const job of boardJobs) job.company = chooseGupyCompanyName(job.company, pageName);
       } catch (err) {
         console.error(
           `⚠️  gupy: canonical company lookup failed for ${origin} — ${err?.message || String(err)}; keeping careerPageName`,
