@@ -32,7 +32,7 @@ function runMerge(additions) {
  * and exit code, and which TSVs the run archived into merged/.
  *
  * @param {Record<string,string>} additions - TSV filename → file content.
- * @param {{rows?: string, header?: string, keepWorkspace?: boolean, reuse?: object}} [opts] -
+ * @param {{rows?: string, header?: string, batchState?: string, keepWorkspace?: boolean, reuse?: object}} [opts] -
  *   Seed rows appended to the tracker header, or a replacement header (used to
  *   build a tracker whose table separator row is missing). `keepWorkspace`
  *   leaves the temp dir on disk and returns it, and `reuse` runs against a
@@ -45,6 +45,7 @@ function runMergeDetailed(additions, opts = {}) {
   try {
     const tracker = join(work, 'applications.md');
     const addsDir = join(work, 'adds');
+    const batchState = join(work, 'batch-state.tsv');
     mkdirSync(addsDir, { recursive: true });
     writeFileSync(tracker, (opts.header ?? TRACKER_HEADER) + (opts.rows ?? ''));
     // On a reused workspace the pending TSVs are already on disk from the
@@ -53,6 +54,7 @@ function runMergeDetailed(additions, opts = {}) {
       for (const [name, line] of Object.entries(additions)) {
         writeFileSync(join(addsDir, name), line);
       }
+      if (opts.batchState != null) writeFileSync(batchState, opts.batchState);
     }
     let output = '';
     let exitCode = 0;
@@ -65,7 +67,14 @@ function runMergeDetailed(additions, opts = {}) {
         // separator-row fixture below deliberately triggers a loud failure,
         // and its error text would otherwise land in the suite's own log.
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, CAREER_OPS_TRACKER: tracker, CAREER_OPS_ADDITIONS: addsDir },
+        env: {
+          ...process.env,
+          CAREER_OPS_TRACKER: tracker,
+          CAREER_OPS_ADDITIONS: addsDir,
+          // Never let an isolated merge test read the developer's real batch
+          // state. Tests that exercise the guard provide their own fixture.
+          CAREER_OPS_BATCH_STATE: batchState,
+        },
       });
     } catch (e) {
       output = String(e.stdout ?? '') + String(e.stderr ?? '');
@@ -213,6 +222,46 @@ try {
   }
 } catch (e) {
   fail(`merge-tracker.mjs tests crashed: ${e.message}`);
+}
+
+// A released report number can be reused by another batch item or by the
+// interactive pipeline. The old guard indexed failures by report number only,
+// so one stale failed row poisoned every later legitimate owner of that number.
+console.log('\nmerge-tracker.mjs — released report-number reuse');
+try {
+  const header = 'id\turl\tstatus\tstarted_at\tcompleted_at\treport_num\tscore\terror\tretries\n';
+  const failed = '1\thttps://example.com/failed\tfailed\t-\t-\t7\t-\tboom\t1\n';
+  const completed = '2\thttps://example.com/good\tcompleted\t-\t-\t7\t4.2\t-\t0\n';
+  const line = '7\t2026-01-01\tAcme\tAI Engineer\tEvaluated\t4.2/5\t✅\t[7](reports/7-acme.md)\tvalid reuse\n';
+
+  const reusedByBatch = runMergeDetailed({ '2.tsv': line }, { batchState: header + failed + completed });
+  if (/\bAcme\b/.test(reusedByBatch.tracker) && reusedByBatch.exitCode === 0) {
+    pass('completed batch item may reuse a report number released by an older failed item');
+  } else {
+    fail(`valid batch reuse was rejected: ${reusedByBatch.output.trim()}`);
+  }
+
+  const reusedByPipeline = runMergeDetailed(
+    { '7-acme.tsv': line },
+    { batchState: header + failed },
+  );
+  if (/\bAcme\b/.test(reusedByPipeline.tracker) && reusedByPipeline.exitCode === 0) {
+    pass('interactive pipeline TSV is not poisoned by an unrelated failed batch report number');
+  } else {
+    fail(`valid pipeline reuse was rejected: ${reusedByPipeline.output.trim()}`);
+  }
+
+  const failedOwner = runMergeDetailed({ '1.tsv': line }, { batchState: header + failed });
+  if (!/\bAcme\b/.test(failedOwner.tracker)
+      && failedOwner.exitCode !== 0
+      && failedOwner.pending.includes('1.tsv')
+      && !failedOwner.archived.includes('1.tsv')) {
+    pass('failed batch owner remains blocked and its TSV stays pending for recovery');
+  } else {
+    fail(`failed batch owner guard regressed: exit=${failedOwner.exitCode}, pending=${failedOwner.pending}, archived=${failedOwner.archived}`);
+  }
+} catch (e) {
+  fail(`released report-number reuse tests crashed: ${e.message}`);
 }
 
 // ── #2392 gap 1: a SECOND update to the same row was silently dropped ───────

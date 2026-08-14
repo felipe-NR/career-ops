@@ -526,6 +526,47 @@ reserve_report_num() {
   run_with_state_lock reserve_report_num_unlocked "$@"
 }
 
+# Fill the worker's JD file with a locally rendered copy of the posting.
+#
+# The worker prompt reads {{JD_FILE}} first and only falls back to WebFetch when
+# it is empty (batch-prompt.md steps 1-2). Some ATS hosts answer WebFetch with a
+# WAF challenge -- jobs.lever.co returns HTTP 403 -- so that fallback strands
+# perfectly reachable postings. browser-extract.mjs renders the same page
+# headlessly with Playwright and costs zero LLM tokens, so we try it up front.
+#
+# Best effort by design: any failure leaves the file empty and the worker's
+# existing WebFetch path still runs. Never fail the offer from here.
+prefetch_jd() {
+  local url="$1" jd_file="$2" id="$3"
+
+  [[ -f "$PROJECT_DIR/browser-extract.mjs" ]] || return 0
+  # local: JDs already live on disk; the worker resolves them itself.
+  [[ "$url" == local:* ]] && return 0
+
+  local raw=""
+  raw="$(cd "$PROJECT_DIR" && timeout 120 node browser-extract.mjs "$url" \
+    --mode jd --max-chars 40000 2>/dev/null)" || raw=""
+
+  [[ -n "$raw" ]] || { echo "    ℹ️  JD prefetch produced nothing for #$id — worker will try WebFetch"; return 0; }
+
+  # browser-extract prints {"error":...,"code":...} on failure; ignore those.
+  printf '%s' "$raw" | node -e '
+    let s = "";
+    process.stdin.on("data", d => (s += d)).on("end", () => {
+      let text = "";
+      try { text = JSON.parse(s).text || ""; } catch {}
+      process.stdout.write(text);
+    });
+  ' > "$jd_file" 2>/dev/null || : > "$jd_file"
+
+  if [[ -s "$jd_file" ]]; then
+    echo "    📄 JD prefetched locally for #$id ($(wc -c < "$jd_file") bytes) — WebFetch not needed"
+  else
+    echo "    ℹ️  JD prefetch produced nothing for #$id — worker will try WebFetch"
+  fi
+  return 0
+}
+
 # Process a single offer
 process_offer() {
   local id="$1" url="$2" source="$3" notes="$4"
@@ -545,6 +586,8 @@ process_offer() {
   jd_file="$(mktemp "${TMPDIR:-/tmp}/batch-jd-${id}.XXXXXX")"
 
   echo "--- Processing offer #$id: $url (report $report_num, attempt $((retries + 1)))"
+
+  prefetch_jd "$url" "$jd_file" "$id"
 
   # Build the prompt with placeholders replaced
   local prompt

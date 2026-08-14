@@ -1,81 +1,59 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { pass, fail, ROOT } from './helpers.mjs';
-import { buildStartupPayload } from '../.codex/hooks/career-ops-startup.mjs';
 
-const hooksPath = join(ROOT, '.codex', 'hooks.json');
+// Codex startup hooks were deliberately removed in d5e61e3. Keep coverage on
+// the startup integration that still ships (Claude Code) and pin the removal
+// so a stale test can never import a deleted .codex module and abort test-all.
+const settingsPath = join(ROOT, '.claude', 'settings.json');
+const hookPath = join(ROOT, '.claude', 'hooks', 'career-ops-startup.mjs');
 
 try {
-  const config = JSON.parse(readFileSync(hooksPath, 'utf8'));
+  const config = JSON.parse(readFileSync(settingsPath, 'utf8'));
   const group = config.hooks?.SessionStart?.[0];
   const handler = group?.hooks?.[0];
   if (
-    group?.matcher === '^startup$' &&
     handler?.type === 'command' &&
-    handler.command?.includes('.codex/hooks/career-ops-startup.mjs') &&
-    handler.commandWindows?.includes('.codex\\hooks\\career-ops-startup.mjs') &&
-    handler.timeout >= 16
+    handler.command?.includes('.claude/hooks/career-ops-startup.mjs') &&
+    handler.timeout >= 8
   ) {
-    pass('Codex startup-only SessionStart hook is registered for Unix and Windows with a bounded timeout');
+    pass('Claude SessionStart hook is registered with a bounded timeout');
   } else {
-    fail('Codex SessionStart hook registration is incomplete');
+    fail('Claude SessionStart hook registration is incomplete');
   }
 } catch (err) {
-  fail(`Codex hooks.json is not valid JSON: ${err.message}`);
+  fail(`Claude settings.json is not valid JSON: ${err.message}`);
 }
 
 const updater = readFileSync(join(ROOT, 'update-system.mjs'), 'utf8');
 const systemPaths = (updater.match(/SYSTEM_PATHS\s*=\s*\[([\s\S]*?)\]/) || [, ''])[1];
-const dataContract = readFileSync(join(ROOT, 'DATA_CONTRACT.md'), 'utf8');
+const userPaths = (updater.match(/USER_PATHS\s*=\s*\[([\s\S]*?)\]/) || [, ''])[1];
 if (
-  systemPaths.includes("'.codex/hooks.json'") &&
-  systemPaths.includes("'.codex/hooks/'") &&
-  dataContract.includes('`.codex/hooks.json` / `.codex/hooks/*`')
+  userPaths.includes("'.claude/settings.json'") &&
+  userPaths.includes("'.claude/hooks/'")
 ) {
-  pass('Codex startup hook is system-owned and shipped by update-system');
+  pass('local Claude startup hook is protected from system updates');
 } else {
-  fail('Codex startup hook is missing from the system-layer/update contract');
+  fail('local Claude startup hook is not protected by update-system USER_PATHS');
 }
 
-const healthy = buildStartupPayload(
-  { ok: true, out: '{"status":"up-to-date"}' },
-  { ok: true, out: '{"onboardingNeeded":false}' },
-);
 if (
-  healthy.systemMessage.includes('Pipeline — Cost×Benefit Funnel') &&
-  healthy.systemMessage.includes('nunca pule `triage`') &&
-  healthy.hookSpecificOutput?.hookEventName === 'SessionStart' &&
-  healthy.hookSpecificOutput.additionalContext.includes('ALREADY displayed') &&
-  healthy.hookSpecificOutput.additionalContext.includes('empty welcome screen')
+  !systemPaths.includes("'.codex/hooks.json'") &&
+  !systemPaths.includes("'.codex/hooks/'")
 ) {
-  pass('Codex first-turn payload renders the funnel and documents lazy SessionStart timing');
+  pass('removed Codex startup hook is not referenced by update-system');
 } else {
-  fail('Codex healthy startup payload is missing the funnel or deduplication context');
+  fail('update-system still references the removed Codex startup hook');
 }
 
-const onboarding = buildStartupPayload(
-  { ok: true, out: '{"status":"up-to-date"}' },
-  { ok: true, out: '{"onboardingNeeded":true}' },
-);
+const hookSource = readFileSync(hookPath, 'utf8');
 if (
-  onboarding.systemMessage.includes('starting onboarding') &&
-  !onboarding.systemMessage.includes('Pipeline — Cost×Benefit Funnel') &&
-  onboarding.hookSpecificOutput.additionalContext.includes('onboardingNeeded=true')
+  hookSource.includes('Pipeline — Cost×Benefit Funnel') &&
+  hookSource.includes('ALREADY displayed') &&
+  hookSource.includes('onboardingNeeded=true') &&
+  hookSource.includes('setup status UNKNOWN')
 ) {
-  pass('Codex startup payload enters onboarding instead of showing the funnel');
+  pass('Claude startup hook retains funnel deduplication and fail-closed onboarding guidance');
 } else {
-  fail('Codex onboarding gate did not suppress the normal startup funnel');
-}
-
-const failedDoctor = buildStartupPayload(
-  { ok: false, out: '', err: 'offline' },
-  { ok: false, out: '', err: 'doctor failed' },
-);
-if (
-  failedDoctor.systemMessage.includes('setup status UNKNOWN') &&
-  failedDoctor.hookSpecificOutput.additionalContext.includes('treat onboarding status as UNKNOWN')
-) {
-  pass('Codex startup payload fails closed when doctor output is unusable');
-} else {
-  fail('Codex startup payload fails open when doctor output is unusable');
+  fail('Claude startup hook is missing funnel, deduplication, or fail-closed guidance');
 }

@@ -136,7 +136,6 @@ These files contain system logic, scripts, templates, and instructions that impr
 | `.qwen/skills/*` | Skill definitions (Qwen Code) |
 | `.antigravitycli/skills/*` | Skill definitions (Antigravity CLI) |
 | `.grok/skills/*` | Skill definitions (Grok Build CLI) |
-| `.codex/hooks.json` / `.codex/hooks/*` | Codex lifecycle-hook registration and system-owned hook scripts |
 | `docs/*` | Documentation |
 | `VERSION` | Current version number |
 | `DATA_CONTRACT.md` | This file |

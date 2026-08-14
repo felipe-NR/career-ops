@@ -186,6 +186,40 @@ try {
     fail('an accepted page budget changed the rendered PDF instead of acting only as a post-render decision');
   }
 
+  const nestedPdf = join(sandbox, 'new', 'nested', 'report-scoped-100.pdf');
+  const nested = runPdf([input, nestedPdf, '--report=100']);
+  if (nested.status === 0 && existsSync(nestedPdf) && manifestHasPdf(nestedPdf)) {
+    pass('generate-pdf creates a missing nested output directory before acquiring its lock');
+  } else {
+    fail(`generate-pdf no longer creates nested output directories: ${nested.output.trim()}`);
+  }
+
+  const ownedPdf = join(sandbox, 'report-scoped-101.pdf');
+  const firstOwner = runPdf([input, ownedPdf, '--report=101']);
+  const ownedBeforeCollision = existsSync(ownedPdf) ? readFileSync(ownedPdf) : null;
+  const secondOwner = runPdf([input, ownedPdf, '--report=102']);
+  const ownedAfterCollision = existsSync(ownedPdf) ? readFileSync(ownedPdf) : null;
+  if (
+    firstOwner.status === 0 &&
+    secondOwner.status !== 0 &&
+    secondOwner.output.includes('already belongs to report 101') &&
+    ownedBeforeCollision?.equals(ownedAfterCollision)
+  ) {
+    pass('generate-pdf refuses to overwrite a PDF owned by another report');
+  } else {
+    fail(`generate-pdf report ownership guard regressed: ${secondOwner.output.trim()}`);
+  }
+
+  const busyPdf = join(sandbox, 'report-scoped-103.pdf');
+  mkdirSync(`${busyPdf}.career-ops-lock`);
+  const busy = runPdf([input, busyPdf, '--report=103']);
+  rmSync(`${busyPdf}.career-ops-lock`, { recursive: true, force: true });
+  if (busy.status !== 0 && busy.output.includes('already being generated') && !existsSync(busyPdf)) {
+    pass('generate-pdf refuses concurrent writers targeting the same PDF path');
+  } else {
+    fail(`generate-pdf concurrent-output guard regressed: ${busy.output.trim()}`);
+  }
+
   const defaultOverflowPdf = join(sandbox, 'default-overflow.pdf');
   const defaultOverflow = runPdf([defaultOverflowInput, defaultOverflowPdf]);
   if (

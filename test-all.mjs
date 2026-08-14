@@ -150,7 +150,15 @@ async function runDiscovered(filter = null) {
       fail(`${f.slice(ROOT.length + 1)} calls finish() — only test-all.mjs may print the global summary; discovered suites use pass/fail and return`);
       continue;
     }
-    await import(pathToFileURL(f).href);
+    try {
+      await import(pathToFileURL(f).href);
+    } catch (err) {
+      // A stale import or top-level exception in one discovered suite must not
+      // decapitate the entire run before finish() prints the real summary. The
+      // old startup-hooks suite imported a deliberately removed .codex hook,
+      // aborted after only a handful of tests, and skipped every later suite.
+      fail(`${rel} — suite import failed: ${err?.stack || err?.message || err}`);
+    }
   }
 }
 
@@ -12803,15 +12811,16 @@ try {
     filteredTitle: 40, filteredTier: 5, filteredLocation: 20, filteredPostingAge: 3, filteredSalary: 2,
     filteredContent: 6, filteredCooldown: 1, dupes: 38, newAdded: 8, errors: 0,
     filteredBlacklist: 4, filteredVisa: 7, filteredPostedDate: 2,
+    runId: 'scan-test-001',
   };
   appendScanRunSummary(counters, runsFile);
   appendScanRunSummary({ ...counters, timestamp: '2026-07-04T09:00:00Z' }, runsFile);
   const runRows = readFileSync(runsFile, 'utf-8').trim().split('\n');
   if (runRows[0] === SCAN_RUNS_HEADER.trim() && runRows.length === 3
       && runRows[1].startsWith('2026-07-03T14:02:11Z\tcompleted\t45\t3\t120\t')
-      // filtered_blacklist + filtered_visa + filtered_posted_date + filtered_country_eligibility
-      // land in the four trailing columns (last defaults to 0 — not supplied above).
-      && runRows[1].endsWith('\t4\t7\t2\t0')
+      // The appended columns remain header-addressable and run_id is last.
+      // filtered_country_eligibility defaults to 0 because it is not supplied above.
+      && runRows[1].endsWith('\t4\t7\t2\t0\tscan-test-001')
       && runRows[2].startsWith('2026-07-04T09:00:00Z\t')) {
     pass('appendScanRunSummary writes the header once, appends one row per run');
   } else {

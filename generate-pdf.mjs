@@ -29,7 +29,7 @@
 import { chromium } from 'playwright';
 import { resolve, dirname, relative, sep, isAbsolute } from 'path';
 import { readFile } from 'fs/promises';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, statSync } from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { randomUUID } from 'node:crypto';
 import { readStyleTokens, injectThemeStyle } from './theme-style.mjs';
@@ -384,35 +384,81 @@ export function injectPrintPageCss(html, format = 'a4') {
  * CVs supersede stale entries). The file is gitignored: it references
  * gitignored output/ artifacts and is meaningless on another machine.
  */
+function withDirectoryLock(lockPath, body, { attempts = 200, waitMs = 10, staleMs = 120_000 } = {}) {
+  let acquired = false;
+  const waiter = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      mkdirSync(lockPath);
+      acquired = true;
+      break;
+    } catch (err) {
+      if (err?.code !== 'EEXIST') throw err;
+      try {
+        if (Date.now() - statSync(lockPath).mtimeMs > staleMs) {
+          rmSync(lockPath, { recursive: true, force: true });
+          continue;
+        }
+      } catch (statErr) {
+        if (statErr?.code === 'ENOENT') continue;
+        throw statErr;
+      }
+      Atomics.wait(waiter, 0, 0, waitMs);
+    }
+  }
+  if (!acquired) throw new Error(`Timed out waiting for lock: ${lockPath}`);
+  try {
+    return body();
+  } finally {
+    rmSync(lockPath, { recursive: true, force: true });
+  }
+}
+
+function normalizeReportKey(value) {
+  return (value || '').trim().replace(/^0+(?=\d)/, '');
+}
+
+function assertPDFPathOwnership(manifestPath, reportNum, relPDF) {
+  if (!reportNum || !existsSync(manifestPath)) return;
+  for (const line of readFileSync(manifestPath, 'utf-8').split('\n')) {
+    if (!line.trim() || line.startsWith('#')) continue;
+    const fields = line.split('\t');
+    if (fields[1] === relPDF && normalizeReportKey(fields[0]) !== normalizeReportKey(reportNum)) {
+      throw new Error(
+        `Refusing to overwrite ${relPDF}: it already belongs to report ${fields[0] || '(unkeyed)'}. ` +
+        `Use a report-scoped filename such as cv-company-${reportNum}.pdf.`,
+      );
+    }
+  }
+}
+
 function updatePDFManifest(reportNum, pdfPath, htmlPath, format) {
   const manifestPath = resolve(__dirname, 'data', 'pdf-index.tsv');
+  const manifestLock = `${manifestPath}.lock`;
   const toRel = (p) => relative(__dirname, p).split(sep).join('/');
   const relPDF = toRel(pdfPath);
   const relHTML = repoRelativeManifestPath(htmlPath);
   const date = new Date().toISOString().slice(0, 10);
-  // "008" and "8" are the same report — zero-padded report-link form vs
-  // unpadded tracker-# form. Normalize so replacement rows match.
-  const normKey = (s) => (s || '').trim().replace(/^0+(?=\d)/, '');
-
-  let lines = [];
-  if (existsSync(manifestPath)) {
-    lines = readFileSync(manifestPath, 'utf-8').split('\n').filter((line) => {
-      if (!line.trim() || line.startsWith('#')) return false;
-      const fields = line.split('\t');
-      if (fields[1] === relPDF) return false;
-      if (reportNum && normKey(fields[0]) === normKey(reportNum)) return false;
-      return true;
-    });
-  }
-
-  lines.push([reportNum || '', relPDF, relHTML, format, date].join('\t'));
-
   mkdirSync(dirname(manifestPath), { recursive: true });
-  writeFileSync(
-    manifestPath,
-    '# report\tpdf\thtml\tformat\tdate — written by generate-pdf.mjs, do not edit\n' +
-      lines.join('\n') + '\n'
-  );
+  withDirectoryLock(manifestLock, () => {
+    assertPDFPathOwnership(manifestPath, reportNum, relPDF);
+    let lines = [];
+    if (existsSync(manifestPath)) {
+      lines = readFileSync(manifestPath, 'utf-8').split('\n').filter((line) => {
+        if (!line.trim() || line.startsWith('#')) return false;
+        const fields = line.split('\t');
+        if (fields[1] === relPDF) return false;
+        if (reportNum && normalizeReportKey(fields[0]) === normalizeReportKey(reportNum)) return false;
+        return true;
+      });
+    }
+    lines.push([reportNum || '', relPDF, relHTML, format, date].join('\t'));
+    writeFileSync(
+      manifestPath,
+      '# report\tpdf\thtml\tformat\tdate — written by generate-pdf.mjs, do not edit\n' +
+        lines.join('\n') + '\n'
+    );
+  });
   return relPDF;
 }
 
@@ -490,37 +536,58 @@ async function generatePDF() {
     process.exit(1);
   }
 
-  console.log(`📄 Input:  ${inputPath}`);
-  console.log(`📁 Output: ${outputPath}`);
-  console.log(`📏 Format: ${format.toUpperCase()}`);
-  console.log(`📐 Page budget: ${maxPages}${strictPages ? ' (strict)' : ' (warning only)'}`);
-
-  let html = await readFile(inputPath, 'utf-8');
-  let cvMarkdown = '';
+  // Preserve the renderer's existing contract: callers may target a nested
+  // output directory that does not exist yet. The lock itself lives beside the
+  // PDF, so its parent must exist before mkdirSync can claim it atomically.
+  mkdirSync(dirname(outputPath), { recursive: true });
+  const outputLock = `${outputPath}.career-ops-lock`;
   try {
-    cvMarkdown = await readFile(resolve(__dirname, 'cv.md'), 'utf-8');
+    mkdirSync(outputLock);
   } catch (err) {
-    if (err?.code !== 'ENOENT') throw err;
-  }
-  validateCvSectionOrder(html, cvMarkdown, { allowReorder });
-
-  // Normalize text for ATS compatibility (issue #1)
-  const normalized = normalizeTextForATS(html);
-  html = normalized.html;
-  const totalReplacements = Object.values(normalized.replacements).reduce((a, b) => a + b, 0);
-  if (totalReplacements > 0) {
-    const breakdown = Object.entries(normalized.replacements).map(([k, v]) => `${k}=${v}`).join(', ');
-    console.log(`🧹 ATS normalization: ${totalReplacements} replacements (${breakdown})`);
+    if (err?.code === 'EEXIST') {
+      throw new Error(`Refusing concurrent PDF write: ${outputPath} is already being generated. Use a report-scoped filename.`);
+    }
+    throw err;
   }
 
-  return renderHtmlToPdf(html, outputPath, {
-    format,
-    baseDir: dirname(inputPath),
-    reportNum,
-    inputPath,
-    maxPages,
-    strictPages,
-  });
+  try {
+    const manifestPath = resolve(__dirname, 'data', 'pdf-index.tsv');
+    const relPDF = relative(__dirname, outputPath).split(sep).join('/');
+    assertPDFPathOwnership(manifestPath, reportNum, relPDF);
+
+    console.log(`📄 Input:  ${inputPath}`);
+    console.log(`📁 Output: ${outputPath}`);
+    console.log(`📏 Format: ${format.toUpperCase()}`);
+    console.log(`📐 Page budget: ${maxPages}${strictPages ? ' (strict)' : ' (warning only)'}`);
+
+    let html = await readFile(inputPath, 'utf-8');
+    let cvMarkdown = '';
+    try {
+      cvMarkdown = await readFile(resolve(__dirname, 'cv.md'), 'utf-8');
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+    }
+    validateCvSectionOrder(html, cvMarkdown, { allowReorder });
+
+    const normalized = normalizeTextForATS(html);
+    html = normalized.html;
+    const totalReplacements = Object.values(normalized.replacements).reduce((a, b) => a + b, 0);
+    if (totalReplacements > 0) {
+      const breakdown = Object.entries(normalized.replacements).map(([k, v]) => `${k}=${v}`).join(', ');
+      console.log(`🧹 ATS normalization: ${totalReplacements} replacements (${breakdown})`);
+    }
+
+    return await renderHtmlToPdf(html, outputPath, {
+      format,
+      baseDir: dirname(inputPath),
+      reportNum,
+      inputPath,
+      maxPages,
+      strictPages,
+    });
+  } finally {
+    rmSync(outputLock, { recursive: true, force: true });
+  }
 }
 
 /**
