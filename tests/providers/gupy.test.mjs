@@ -8,7 +8,7 @@ console.log('\nProvider — gupy');
 try {
   const mod = await import(pathToFileURL(join(ROOT, 'providers/gupy.mjs')).href);
   const provider = mod.default;
-  const { normalizeGupyApiJob, buildGupyLocation } = mod;
+  const { normalizeGupyApiJob, buildGupyLocation, parseGupyCareerPageCompany } = mod;
 
   if (provider.id === 'gupy') pass('gupy.id is "gupy"');
   else fail(`gupy.id is ${JSON.stringify(provider.id)}`);
@@ -31,7 +31,7 @@ try {
       && full.location === 'Remoto, Porto Alegre, Rio Grande do Sul, Brasil'
       && full.description === 'JD body'
       && full.postedAt === Date.parse('2026-08-01T12:00:00.000Z')) {
-    pass('normalizeGupyApiJob maps name/jobUrl/careerPageName/location/description + publishedDate → postedAt');
+    pass('normalizeGupyApiJob maps the list-level careerPageName fallback plus the remaining job fields');
   } else {
     fail(`normalizeGupyApiJob full row = ${JSON.stringify(full)}`);
   }
@@ -95,6 +95,28 @@ try {
   if (apex && apex.url === 'https://gupy.io/job/apex') pass('normalizeGupyApiJob accepts the apex gupy.io host, not only subdomains');
   else fail(`normalizeGupyApiJob apex = ${JSON.stringify(apex)}`);
 
+  // The board-wide API's careerPageName is actually the configurable
+  // publication label. The canonical employer name is only present in the
+  // career page's server-rendered __NEXT_DATA__ payload.
+  const careerPageHtml = (name, publicationName = name) => `<!doctype html><html><body>
+    <script type="application/json" id="__NEXT_DATA__">${JSON.stringify({
+      props: { pageProps: { careerPage: { name, publicationName } } },
+    })}</script>
+  </body></html>`;
+  const fcamaraHtml = careerPageHtml('  FCamara  ', 'VENHA SER #SANGUELARANJA 🧡🚀');
+  if (parseGupyCareerPageCompany(fcamaraHtml) === 'FCamara') {
+    pass('parseGupyCareerPageCompany reads careerPage.name, not publicationName');
+  } else {
+    fail(`parseGupyCareerPageCompany FCamara = ${JSON.stringify(parseGupyCareerPageCompany(fcamaraHtml))}`);
+  }
+  if (parseGupyCareerPageCompany('<html>no next data</html>') === ''
+      && parseGupyCareerPageCompany('<script id="__NEXT_DATA__">{broken</script>') === ''
+      && parseGupyCareerPageCompany(null) === '') {
+    pass('parseGupyCareerPageCompany fails open on absent, malformed, or non-string HTML');
+  } else {
+    fail('parseGupyCareerPageCompany malformed-input handling drifted');
+  }
+
   // ── detect() ─────────────────────────────────────────────────────────────
   const hit = provider.detect({ careers_url: 'https://portal.gupy.io' });
   const hitApex = provider.detect({ careers_url: 'https://gupy.io' });
@@ -117,6 +139,57 @@ try {
     country: 'Brasil',
     publishedDate: '2026-08-01T00:00:00.000Z',
   });
+
+  // REGRESSION: FCamara's list record reports its recruiting slogan as
+  // careerPageName. Resolve the board once (not once per job) and replace both
+  // rows with the SSR careerPage.name.
+  const companyPageCalls = [];
+  const canonicalJobs = await provider.fetch({ keywords: ['Backend'], max_pages: 1 }, {
+    fetchJson: async () => ({
+      data: [
+        { ...mk(1, 'VENHA SER #SANGUELARANJA 🧡🚀'), jobUrl: 'https://fcamara.gupy.io/job/1' },
+        { ...mk(2, 'VENHA SER #SANGUELARANJA 🧡🚀'), jobUrl: 'https://fcamara.gupy.io/job/2' },
+      ],
+      pagination: { total: 2 },
+    }),
+    fetchText: async (url) => {
+      companyPageCalls.push(url);
+      return careerPageHtml('FCamara', 'VENHA SER #SANGUELARANJA 🧡🚀');
+    },
+  });
+  if (companyPageCalls.length === 1
+      && companyPageCalls[0] === 'https://fcamara.gupy.io/'
+      && canonicalJobs.every((job) => job.company === 'FCamara')) {
+    pass('fetch() resolves careerPage.name once per board and replaces the publication slogan');
+  } else {
+    fail(`fetch() company enrichment = ${JSON.stringify({ companyPageCalls, companies: canonicalJobs.map((j) => j.company) })}`);
+  }
+
+  // A markup change must retain the API label rather than blanking or dropping
+  // otherwise valid jobs.
+  const fallbackJobs = await provider.fetch({ keywords: ['Backend'], max_pages: 1 }, {
+    fetchJson: async () => ({ data: [mk(3, 'Fallback Label')], pagination: { total: 1 } }),
+    fetchText: async () => '<html>changed markup</html>',
+  });
+  if (fallbackJobs.length === 1 && fallbackJobs[0].company === 'Fallback Label') {
+    pass('fetch() keeps careerPageName when the canonical page name cannot be parsed');
+  } else {
+    fail(`fetch() company fallback = ${JSON.stringify(fallbackJobs)}`);
+  }
+
+  // verify-portals passes ctx.maxPages for a bounded liveness probe. Company
+  // enrichment must not turn that one-page probe into a per-board HTML fan-out.
+  let probeCompanyCalls = 0;
+  const probeJobs = await provider.fetch({ keywords: ['Backend'], max_pages: 1 }, {
+    maxPages: 1,
+    fetchJson: async () => ({ data: [mk(4, 'Probe Label')], pagination: { total: 1 } }),
+    fetchText: async () => { probeCompanyCalls++; return careerPageHtml('Probe Canonical'); },
+  });
+  if (probeCompanyCalls === 0 && probeJobs[0]?.company === 'Probe Label') {
+    pass('fetch() skips canonical-name fan-out during ctx.maxPages health probes');
+  } else {
+    fail(`fetch() probe enrichment = ${JSON.stringify({ probeCompanyCalls, probeJobs })}`);
+  }
 
   // One sweep per keyword — Gupy's jobName matches titles narrowly, so terms
   // must NOT be joined into a single query the way a16z-speedrun-talent does.

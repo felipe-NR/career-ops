@@ -75,6 +75,11 @@ const DEFAULT_MAX_PAGES = 5; // × PER_PAGE = 500 postings per keyword
 // nothing: the measured 10-keyword sweep needs 13 requests and no keyword gets
 // past page 4.
 const MAX_PAGES_CAP = 200;
+// Resolving the canonical employer name requires one SSR career-page read per
+// distinct Gupy board. Keep that fan-out bounded: a broad keyword can surface
+// dozens of employers, and issuing all page reads at once needlessly hammers
+// Gupy even though the lookups are independent.
+const COMPANY_NAME_CONCURRENCY = 6;
 
 // Same margin workday.mjs uses: stop a safe distance PAST the floor so a feed
 // that is not perfectly monotonic can never strand an eligible posting on an
@@ -204,6 +209,98 @@ function toEpochMs(value) {
 }
 
 /**
+ * Extract the employer-facing name from a Gupy career page's SSR payload.
+ *
+ * The board-wide jobs API calls its field `careerPageName`, but that value is
+ * actually the page's configurable publication label. For FCamara, for
+ * example, the list API returns "VENHA SER #SANGUELARANJA 🧡🚀" while the
+ * career page exposes:
+ *
+ *   careerPage.name            = "FCamara"
+ *   careerPage.publicationName = "VENHA SER #SANGUELARANJA 🧡🚀"
+ *
+ * Gupy server-renders `careerPage.name` inside __NEXT_DATA__, so resolving one
+ * page per distinct board gives us the real company label without a per-job
+ * request. Invalid or changed markup returns an empty string and lets the
+ * caller retain `careerPageName` as a fail-open fallback.
+ *
+ * @param {unknown} html
+ * @returns {string}
+ */
+export function parseGupyCareerPageCompany(html) {
+  if (typeof html !== 'string' || !html) return '';
+  const match = html.match(/<script\b[^>]*\bid=(['"])__NEXT_DATA__\1[^>]*>([\s\S]*?)<\/script>/i);
+  if (!match) return '';
+  try {
+    const data = JSON.parse(match[2]);
+    const name = data?.props?.pageProps?.careerPage?.name;
+    return typeof name === 'string' ? name.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Resolve the canonical employer label once per distinct Gupy board.
+ *
+ * Origins come only from job URLs that normalizeGupyApiJob already host-locks
+ * to HTTPS *.gupy.io, so this cannot turn API-controlled careerPageUrl data
+ * into an SSRF target. Lookup failures are non-fatal: the list API's label is
+ * still better than dropping the posting altogether.
+ *
+ * `ctx.maxPages` identifies a bounded health probe. Such probes only need to
+ * prove the JSON feed is alive, so they deliberately skip this enrichment;
+ * otherwise a one-page probe could fan out into dozens of HTML requests.
+ *
+ * @param {Array<{url: string, company: string}>} jobs
+ * @param {any} ctx
+ */
+async function resolveCanonicalCompanies(jobs, ctx) {
+  if (jobs.length === 0 || typeof ctx?.fetchText !== 'function') return;
+  if (Number.isInteger(ctx?.maxPages) && ctx.maxPages > 0) return;
+
+  /** @type {Map<string, Array<{url: string, company: string}>>} */
+  const jobsByOrigin = new Map();
+  for (const job of jobs) {
+    let origin;
+    try {
+      // job.url has already passed isSafeGupyUrl; re-check defensively because
+      // this function owns the network call and must not rely on its caller.
+      if (!isSafeGupyUrl(job.url)) continue;
+      origin = `${new URL(job.url).origin}/`;
+    } catch {
+      continue;
+    }
+    if (!jobsByOrigin.has(origin)) jobsByOrigin.set(origin, []);
+    jobsByOrigin.get(origin).push(job);
+  }
+
+  const groups = [...jobsByOrigin.entries()];
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < groups.length) {
+      const index = cursor++;
+      const [origin, boardJobs] = groups[index];
+      try {
+        const html = await ctx.fetchText(origin, {
+          redirect: 'error',
+          headers: { accept: 'text/html' },
+        });
+        const canonical = parseGupyCareerPageCompany(html);
+        if (!canonical) continue;
+        for (const job of boardJobs) job.company = canonical;
+      } catch (err) {
+        console.error(
+          `⚠️  gupy: canonical company lookup failed for ${origin} — ${err?.message || String(err)}; keeping careerPageName`,
+        );
+      }
+    }
+  };
+  const workerCount = Math.min(COMPANY_NAME_CONCURRENCY, groups.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+}
+
+/**
  * Build the display location from the platform's separate fields.
  *
  * The raw API exposes `workplaceType` as a SINGULAR string (remote / hybrid /
@@ -234,9 +331,10 @@ export function buildGupyLocation(j) {
  * Field mapping → the normalized Job shape:
  *   - title:       `name`, trimmed (postings without one are dropped).
  *   - url:         `jobUrl`, host-locked to *.gupy.io (dedup key).
- *   - company:     `careerPageName` — the employer's own board label. Note this
- *                  is user-authored and employers do put recruiting slogans
- *                  here; portals.yml `company_aliases` maps those back.
+ *   - company:     `careerPageName` as the list-level fallback. fetch() later
+ *                  replaces it with the SSR career page's `careerPage.name`
+ *                  once per distinct board; the API field is actually the
+ *                  configurable publication label and may be a slogan.
  *   - location:    workplaceType + city/state/country (see buildGupyLocation).
  *   - description: shipped in the list payload for free, so content_filter and
  *                  the cross-listing SimHash both work without a second request.
@@ -435,6 +533,7 @@ export default {
     // auth from server from network, and wrapping would flatten all four to
     // 'unknown' — which is also what the portal-health streak escalates on.
     if (!succeededOnce && firstError !== null) throw firstError;
+    await resolveCanonicalCompanies(out, ctx);
     return out;
   },
 };
