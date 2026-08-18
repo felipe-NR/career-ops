@@ -27,7 +27,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import { buildCompanyCanonicalizer } from './scan.mjs';
 
 const HISTORY_PATH = 'data/scan-history.tsv';

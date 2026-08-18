@@ -13,11 +13,21 @@ console.log('\ndoctor.mjs — CLI-aware Playwright MCP detection');
 
 const DOCTOR = join(ROOT, 'doctor.mjs');
 
+// Claude Code can supply an MCP server from an installed plugin, which lives
+// under the user's config dir rather than the project root (#2752). Every
+// scenario therefore pins CLAUDE_CONFIG_DIR at an EMPTY dir by default, so a
+// developer's real machine can never decide the result - the same isolation
+// reasoning as the GIT_CONFIG_* pinning in test-all.mjs section 12c (#2569).
+// Scenarios that exercise the plugin path pass their own CLAUDE_CONFIG_DIR.
+const EMPTY_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'co-mcp-emptycfg-'));
+
 function runDoctor(cwd, args, env) {
   try {
     const out = execFileSync(NODE, [DOCTOR, '--json', '--target', cwd, ...args], {
       cwd,
-      env: { ...process.env, ...env },
+      // Order matters: the empty dir must override an ambient CLAUDE_CONFIG_DIR
+      // from the developer's own shell, while a scenario's explicit env still wins.
+      env: { ...process.env, CLAUDE_CONFIG_DIR: EMPTY_CONFIG_DIR, ...env },
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
@@ -25,6 +35,22 @@ function runDoctor(cwd, args, env) {
   } catch (e) {
     return { _error: e.message, _stderr: e.stderr ? String(e.stderr) : '' };
   }
+}
+
+// Build a fake Claude Code config dir: settings.json (enabledPlugins) plus
+// plugins/installed_plugins.json (installPath per plugin) plus each plugin's
+// own .mcp.json - the exact three-file shape doctor resolves.
+function makePluginHome({ key, enabled, mcpJson }) {
+  const dir = mkdtempSync(join(tmpdir(), 'co-mcp-home-'));
+  const installPath = join(dir, 'plugins', 'cache', 'marketplace', 'plugin', 'unknown');
+  mkdirSync(installPath, { recursive: true });
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ enabledPlugins: { [key]: enabled } }));
+  writeFileSync(
+    join(dir, 'plugins', 'installed_plugins.json'),
+    JSON.stringify({ version: 2, plugins: { [key]: [{ scope: 'user', installPath }] } }),
+  );
+  if (mcpJson !== null) writeFileSync(join(installPath, '.mcp.json'), mcpJson);
+  return dir;
 }
 
 function expectWarn(state, msg) {
@@ -517,4 +543,6 @@ try {
 
 } catch (e) {
   fail(`opencode-mcp-detection tests crashed: ${e.message}`);
+} finally {
+  rmSync(EMPTY_CONFIG_DIR, { recursive: true, force: true });
 }
