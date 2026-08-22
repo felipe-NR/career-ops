@@ -105,6 +105,28 @@ function classifyOutcome(status) {
   return 'pending'; // evaluated
 }
 
+// --- Rate denominators ---
+//
+// A frequency is only meaningful against the population that could have
+// produced it. Both counters below exist because `enriched.length` — EVERY
+// tracker row — was standing in for two much smaller populations, silently
+// deflating every derived percentage and the thresholds computed from them.
+//
+// Entries eligible to carry a discard/skip reason. A 'pending' (Evaluated,
+// never acted on) or 'positive' row has no reason to state, so counting it in
+// the base only dilutes the share. Must stay in lockstep with the filter that
+// guards the discard-reason harvest loop.
+function discardableBase(enriched) {
+  return enriched.filter(e => e.outcome === 'self_filtered' || e.outcome === 'negative').length;
+}
+
+// Entries that actually carry gaps, i.e. the ones a blocker can be extracted
+// from. Entries whose report has no gaps (or no report at all) can never
+// contribute a blocker and must not pad the denominator.
+function gapBearingBase(enriched) {
+  return enriched.filter(e => e.report?.gaps?.length > 0).length;
+}
+
 // Statuses that count as a submitted application for channel-yield analysis
 // (drop 'evaluated' = never applied, 'skip' = self-filtered). 'hired' counts —
 // a landed job was, by definition, submitted. Module-scoped so the self-test
@@ -388,6 +410,76 @@ risk_summary:
   // Case/punctuation variants collapse to one canonical bucket.
   if (extractTechMentions('nodejs, Node.js, NODEJS').some(t => t !== 'Node.js')) {
     failures.push('node.js case variants failed to canonicalize');
+  }
+
+  // Production aggregation regressions. The fixture distinguishes the fixed
+  // denominator from the old full-tracker base: 3 tags among 20 eligible rows
+  // trigger a recommendation, while 3 among all 30 rows would not.
+  const baseFixture = [];
+  for (let i = 0; i < 20; i++) {
+    baseFixture.push({
+      outcome: i === 19 ? 'negative' : 'self_filtered',
+      notes: i < 3 ? `SKIP: geo-block${i === 0 ? '; SKIP: geo-block' : ''}` : '',
+      report: { gaps: [] },
+    });
+  }
+  for (let i = 0; i < 10; i++) {
+    baseFixture.push({ outcome: 'pending', notes: '', report: null });
+  }
+  const baseSignals = buildPatternSignals(baseFixture);
+  if (baseSignals.discardReasonBase !== 20) {
+    failures.push(`discardReasonBase counted ${baseSignals.discardReasonBase}, expected 20`);
+  }
+  if (baseSignals.blockerBase !== 0) {
+    failures.push(`blockerBase counted ${baseSignals.blockerBase}, expected 0 (no gaps in fixture)`);
+  }
+  const geoReason = baseSignals.discardReasonStats.find(d => d.reason === 'geo-block');
+  if (geoReason?.frequency !== 3 || geoReason?.percentage !== 15) {
+    failures.push(`discard aggregation returned ${JSON.stringify(geoReason)}, expected frequency 3 and percentage 15`);
+  }
+  if (!baseSignals.discardReasonRecommendation) {
+    failures.push('3 discard reasons among 20 eligible entries did not trigger a recommendation');
+  }
+
+  // One report whose gaps all resolve to geo-restriction is one affected entry,
+  // not three. The explicit count catches both missing and misclassified fixture
+  // descriptions instead of merely checking that no count exceeds the base.
+  const dupBlockerFixture = [
+    { outcome: 'negative', notes: '', report: { gaps: [
+      { description: 'US-only remote', severity: 'hard' },
+      { description: 'Remote US only, no sponsorship', severity: 'hard' },
+      { description: 'US-only residency required', severity: 'hard' },
+    ] } },
+    { outcome: 'negative', notes: '', report: { gaps: [{ description: 'US-only remote', severity: 'hard' }] } },
+    // Gapless rows make the fixture distinguish blockerBase (2) from the old
+    // full-tracker denominator (5). Restoring `/ enriched.length` must turn the
+    // expected 100% into 40% and fail this regression.
+    { outcome: 'pending', notes: '', report: { gaps: [] } },
+    { outcome: 'pending', notes: '', report: null },
+    { outcome: 'positive', notes: '', report: { gaps: [] } },
+  ];
+  const blockerSignals = buildPatternSignals(dupBlockerFixture);
+  const geoBlocker = blockerSignals.blockerAnalysis.find(b => b.blocker === 'geo-restriction');
+  if (geoBlocker?.frequency !== blockerSignals.blockerBase || geoBlocker?.percentage !== 100) {
+    failures.push(`geo blocker aggregation returned ${JSON.stringify(geoBlocker)} against base ${blockerSignals.blockerBase}, expected 2/2 (100%)`);
+  }
+
+  // Repeated technology mentions across one report count once per entry.
+  const techSignals = buildPatternSignals([{ outcome: 'negative', notes: '', report: { gaps: [
+    { description: 'Java is required', severity: 'hard' },
+    { description: 'Production Java and Go experience', severity: 'hard' },
+  ] } }]);
+  const javaGap = techSignals.techStackGaps.find(g => g.skill === 'Java');
+  if (javaGap?.frequency !== 1) {
+    failures.push(`technology deduplication returned ${JSON.stringify(javaGap)}, expected Java frequency 1`);
+  }
+
+  // Empty populations must expose zero bases and no NaN-bearing stats.
+  const emptySignals = buildPatternSignals([]);
+  if (emptySignals.discardReasonBase !== 0 || emptySignals.blockerBase !== 0
+      || emptySignals.discardReasonStats.length !== 0 || emptySignals.blockerAnalysis.length !== 0
+      || emptySignals.discardReasonRecommendation) {
+    failures.push(`empty pattern signals were not empty: ${JSON.stringify(emptySignals)}`);
   }
 
   // Remote classifier (regression): the "70+" signal ends in "+", so a
@@ -743,6 +835,94 @@ function extractBlockerType(gap) {
   return 'other';
 }
 
+/**
+ * Build the blocker, discard-reason, and technology signals used by both the
+ * production analysis and regression fixtures.
+ * @param {Array<object>} enriched Tracker entries enriched with outcomes/reports.
+ * @returns {object} Aggregated rates, population bases, and discard recommendation.
+ */
+function buildPatternSignals(enriched) {
+  const blockerCounts = new Map();
+  const blockerBase = gapBearingBase(enriched);
+  for (const e of enriched) {
+    if (!e.report?.gaps) continue;
+    const entryBlockers = new Set();
+    for (const gap of e.report.gaps) {
+      const type = extractBlockerType(gap);
+      if (type) entryBlockers.add(type);
+    }
+    for (const type of entryBlockers) {
+      blockerCounts.set(type, (blockerCounts.get(type) || 0) + 1);
+    }
+  }
+  const blockerAnalysis = [...blockerCounts.entries()]
+    .map(([blocker, frequency]) => ({
+      blocker,
+      frequency,
+      percentage: blockerBase ? Math.round((frequency / blockerBase) * 100) : 0,
+    }))
+    .sort((a, b) => b.frequency - a.frequency);
+
+  const discardReasonCounts = new Map();
+  for (const e of enriched) {
+    if (e.outcome !== 'self_filtered' && e.outcome !== 'negative') continue;
+    const notesMatch = (e.notes || '').match(/(?:DISCARD|SKIP):\s*([^,;\n]+)/gi);
+    if (!notesMatch) continue;
+    const entryReasons = new Set();
+    for (const match of notesMatch) {
+      const key = match.replace(/^(?:DISCARD|SKIP):\s*/i, '').trim().toLowerCase();
+      if (key) entryReasons.add(key);
+    }
+    for (const key of entryReasons) {
+      discardReasonCounts.set(key, (discardReasonCounts.get(key) || 0) + 1);
+    }
+  }
+  const discardReasonBase = discardableBase(enriched);
+  const discardReasonStats = [...discardReasonCounts.entries()]
+    .map(([reason, frequency]) => ({
+      reason,
+      frequency,
+      percentage: discardReasonBase ? Math.round((frequency / discardReasonBase) * 100) : 0,
+    }))
+    .sort((a, b) => b.frequency - a.frequency);
+
+  const stackGapCounts = new Map();
+  for (const e of enriched) {
+    if (e.outcome !== 'negative' && e.outcome !== 'self_filtered') continue;
+    if (!e.report?.gaps) continue;
+    const entryTechs = new Set();
+    for (const gap of e.report.gaps) {
+      for (const tech of extractTechMentions(gap.description)) entryTechs.add(tech);
+    }
+    for (const tech of entryTechs) {
+      stackGapCounts.set(tech, (stackGapCounts.get(tech) || 0) + 1);
+    }
+  }
+  const techStackGaps = [...stackGapCounts.entries()]
+    .map(([skill, frequency]) => ({ skill, frequency }))
+    .sort((a, b) => b.frequency - a.frequency)
+    .slice(0, 15);
+
+  const topDiscardReason = discardReasonStats[0];
+  const discardReasonRecommendation = topDiscardReason
+    && topDiscardReason.frequency >= Math.max(3, Math.ceil(discardReasonBase * 0.15))
+    ? {
+      action: `Add "${topDiscardReason.reason}" filter to modes/_custom.md to avoid wasting evaluation effort`,
+      reasoning: `"${topDiscardReason.reason}" is the most frequent discard reason (${topDiscardReason.frequency}x, ${topDiscardReason.percentage}% of ${discardReasonBase} eligible entries with self-filtered or negative outcomes).`,
+      impact: 'high',
+    }
+    : null;
+
+  return {
+    blockerBase,
+    blockerAnalysis,
+    discardReasonBase,
+    discardReasonStats,
+    techStackGaps,
+    discardReasonRecommendation,
+  };
+}
+
 // --- Main analysis ---
 function analyze() {
   const entries = parseTracker();
@@ -849,33 +1029,16 @@ function analyze() {
     conversionRate: data.total > 0 ? Math.round((data.positive / data.total) * 100) : 0,
   })).sort((a, b) => b.total - a.total);
 
-  // --- Blocker analysis ---
-  const blockerCounts = new Map();
-  // Only entries carrying gaps can produce a blocker; entries without one must
-  // not pad the denominator. `totalWithGaps` was already computed here and
-  // never used — the intended base was written down but not wired in.
-  const blockerBase = enriched.filter(e => e.report?.gaps?.length > 0).length;
-  for (const e of enriched) {
-    if (!e.report?.gaps) continue;
-    // One entry contributes at most once per blocker type: several gaps in the
-    // same report hitting the same type is one affected entry, not several.
-    const entryBlockers = new Set();
-    for (const gap of e.report.gaps) {
-      const type = extractBlockerType(gap);
-      if (!type) continue;
-      entryBlockers.add(type);
-    }
-    for (const type of entryBlockers) {
-      blockerCounts.set(type, (blockerCounts.get(type) || 0) + 1);
-    }
-  }
-  const blockerAnalysis = [...blockerCounts.entries()]
-    .map(([blocker, frequency]) => ({
-      blocker,
-      frequency,
-      percentage: blockerBase ? Math.round((frequency / blockerBase) * 100) : 0,
-    }))
-    .sort((a, b) => b.frequency - a.frequency);
+  // --- Blocker / discard-reason / technology analysis ---
+  // Shared with --self-test so fixtures exercise the production aggregation.
+  const {
+    blockerBase,
+    blockerAnalysis,
+    discardReasonBase,
+    discardReasonStats,
+    techStackGaps,
+    discardReasonRecommendation,
+  } = buildPatternSignals(enriched);
 
   // --- Remote policy breakdown ---
   const remoteMap = new Map();
@@ -989,84 +1152,14 @@ function analyze() {
   // --- Generate recommendations ---
   const recommendations = [];
 
-  // --- Discard reason analysis (Issue 1380) ---
-
-  // Aggregates user-committed `DISCARD: <reason>` or `SKIP: <reason>` tags in the Notes column.
-  const discardReasonCounts = new Map();
-  for (const e of enriched) {
-    if (e.outcome !== 'self_filtered' && e.outcome !== 'negative') continue;
-    // From tracker Notes column: "DISCARD: <reason>" or "SKIP: <reason>"
-    const notesMatch = (e.notes || '').match(/(?:DISCARD|SKIP):\s*([^,;\n]+)/gi);
-    if (notesMatch) {
-      // One row contributes at most once per reason — a Notes cell repeating
-      // the same tag is still one affected row.
-      const entryReasons = new Set();
-      for (const m of notesMatch) {
-        const key = m.replace(/^(?:DISCARD|SKIP):\s*/i, '').trim().toLowerCase();
-        if (key) entryReasons.add(key);
-      }
-      for (const key of entryReasons) {
-        discardReasonCounts.set(key, (discardReasonCounts.get(key) || 0) + 1);
-      }
-    }
-  }
-  // Both the share and the recommendation threshold are measured against the
-  // DISCARDABLE subset (self_filtered + negative) — the same rows the loop
-  // above is allowed to count — not against every tracker entry. Using
-  // enriched.length let pending 'Evaluated' rows, which can never carry a
-  // reason, inflate the base: at 263 entries with only 60 discardable, the
-  // threshold landed at 40 and no honest reason could ever reach it, while any
-  // blanket label applied to the whole subset cleared it trivially.
-  const discardableCount = enriched.filter(
-    e => e.outcome === 'self_filtered' || e.outcome === 'negative'
-  ).length;
-
-  const discardReasonStats = [...discardReasonCounts.entries()]
-    .map(([reason, frequency]) => ({
-      reason,
-      frequency,
-      percentage: discardableCount ? Math.round((frequency / discardableCount) * 100) : 0,
-    }))
-    .sort((a, b) => b.frequency - a.frequency);
-
-  // Recommend updating _custom.md when a single reason dominates
-  const topDiscardReason = discardReasonStats[0];
-  if (topDiscardReason && topDiscardReason.frequency >= Math.max(3, Math.ceil(discardableCount * 0.15))) {
-    recommendations.push({
-      action: `Add "${topDiscardReason.reason}" filter to modes/_custom.md to avoid wasting evaluation effort`,
-      reasoning: `"${topDiscardReason.reason}" is the most frequent discard reason (${topDiscardReason.frequency}x, ${topDiscardReason.percentage}% of ${discardableCount} eligible entries with self-filtered or negative outcomes).`,
-      impact: 'high',
-    });
-  }
-
-  // --- Tech stack gaps (from negative + self_filtered outcomes) ---
-  const stackGapCounts = new Map();
-  for (const e of enriched) {
-    if (e.outcome !== 'negative' && e.outcome !== 'self_filtered') continue;
-    if (!e.report?.gaps) continue;
-    // One entry contributes at most once per technology: a report whose gaps
-    // mention Java three times is one candidate missing Java, not three.
-    const entryTechs = new Set();
-    for (const gap of e.report.gaps) {
-      for (const tech of extractTechMentions(gap.description)) {
-        entryTechs.add(tech);
-      }
-    }
-    for (const tech of entryTechs) {
-      stackGapCounts.set(tech, (stackGapCounts.get(tech) || 0) + 1);
-    }
-  }
-  const techStackGaps = [...stackGapCounts.entries()]
-    .map(([skill, frequency]) => ({ skill, frequency }))
-    .sort((a, b) => b.frequency - a.frequency)
-    .slice(0, 15);
+  if (discardReasonRecommendation) recommendations.push(discardReasonRecommendation);
 
   // Geo-restriction recommendation
   const geoBlocker = blockerAnalysis.find(b => b.blocker === 'geo-restriction');
   if (geoBlocker && geoBlocker.percentage >= 20) {
     recommendations.push({
-      action: `Tighten location filters in portals.yml -- ${geoBlocker.percentage}% of applications hit a geo-restriction blocker`,
-      reasoning: `${geoBlocker.frequency} of ${blockerBase} entries carrying gaps are location-restricted (US/Canada-only). These are wasted evaluation effort.`,
+      action: `Review location and work-authorization filters in portals.yml -- ${geoBlocker.frequency}/${blockerBase} entries carrying gaps (${geoBlocker.percentage}%) hit a geo-restriction blocker`,
+      reasoning: `${geoBlocker.frequency} of ${blockerBase} entries carrying gaps are affected by a location or work-authorization restriction. Review these filters before applying to similar roles.`,
       impact: 'high',
     });
   }
@@ -1177,10 +1270,10 @@ function analyze() {
     scoreThreshold,
     techStackGaps,
     discardReasonStats,
-    // The base the percentages above are shares of. Exported so a reader can
-    // tell at a glance which denominator is in play — its absence is what let
-    // the wrong one go unnoticed.
-    discardReasonBase: discardableCount,
+    // Populations the percentages above are shares of. Exported because a
+    // consumer cannot sanity-check a rate whose denominator is invisible —
+    // that opacity is precisely what let the wrong base survive unnoticed.
+    discardReasonBase,
     blockerBase,
     recommendations,
   };
