@@ -59,6 +59,26 @@ Inside Claude Code, `/status` reports the active login and shows an API-key row 
 
 `ANTHROPIC_AUTH_TOKEN` and the cloud-provider switches (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`) take precedence too, so check those if a stray key is not the culprit.
 
+### A settings.json helper can bring the key back
+
+Even with the environment clean, `~/.claude/settings.json` can set `apiKeyHelper` — a script Claude Code runs to produce an API key on every request. When it is set, that key wins over your subscription login, so the steps above alone will not fix billing.
+
+Check for it:
+
+```bash
+grep -n "apiKeyHelper" ~/.claude/settings.json 2>/dev/null   # any match means a helper is configured
+```
+
+Remove it then restart Claude Code:
+
+```jsonc
+{
+  "apiKeyHelper": "/path/to/script.sh" // remove this line
+}
+```
+
+Project-level `.claude/settings.json` and `~/.claude/settings.local.json` can set the same key — check those too if it keeps coming back.
+
 ### The batch mode is the exception worth knowing
 
 `batch/batch-runner.sh` drives `claude -p` workers, and the headless path does not use the interactive login. If you want batch runs on your subscription rather than on credits, generate a long-lived token once:
@@ -237,6 +257,37 @@ Running 32B or 70B models locally requires substantial system resources:
 
 > 💡 **Budget Tip**: For most users, running **DeepSeek V3** or **Qwen 2.5 Coder 72B** via a cheap hosted API (like DeepSeek directly or OpenRouter) is far more efficient and cost-effective than investing in local hardware, costing only a few cents for dozens of evaluations.
 
+### Ollama + OpenCode Quick-Start (Verified)
+For users who want a completely local setup on Apple Silicon, Ollama can be used with OpenCode without an API key.
+
+The following setup was verified on an Apple Silicon Mac with 16 GB unified memory.
+
+1. Install Ollama and make sure it is running.
+2. Pull the model:
+
+   ```bash
+   ollama pull command-r7b
+   ```
+3. Verify that the model is available:
+   ```bash
+   ollama list
+   ```
+4. Launch OpenCode with the local model:
+
+    ```bash
+    ollama launch opencode --model command-r7b
+    ```
+5. From OpenCode, point the agent at your Career-Ops checkout and run a simple repository task to confirm that the model can interact with the repository.
+
+- **Verified hardware:** Apple M4, 16 GB unified memory
+- **Model:** `command-r7b` (7B parameters)
+- **Inference:** Local through Ollama
+- **API key:** Not required
+- **API cost:** $0
+
+Observed result: OpenCode launched successfully with `command-r7b`. A simple prompt completed in approximately 57 seconds. The model produced a reasonable high-level README summary, but it did not reliably read repository files through OpenCode during testing. For complex repository tasks, larger models may provide better accuracy.
+
+> **Performance and quality note:** Smaller local models can be useful on memory-constrained hardware, but they may be less reliable than larger hosted models for complex Career-Ops evaluations, repository analysis, and resume tailoring. Use this setup when local execution and zero API cost are more important than maximum output quality.
 ---
 
 ## 6. Token-Saving Best Practices

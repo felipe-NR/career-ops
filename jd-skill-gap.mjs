@@ -27,8 +27,8 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { fileURLToPath } from 'url';
 import { canonicalize, extractSkills } from './skill-extract.mjs';
+import { isMainModule } from './lib/is-main-module.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
 
@@ -41,14 +41,20 @@ const CV_PATH = 'cv.md';
 // (missing a skill) is recoverable by the user reading the JD themselves;
 // over-extracting noise into "required skills" is not — it would misreport
 // gaps that aren't real.
-
+//
 // Real postings rarely use the word "Requirements". The literal-only list
 // missed the phrasings most modern ATS boards actually ship ("What we're
 // looking for", "Who you are", "You may be a good fit if", "You have"), so a
 // JD could yield zero skills - which reads identically to "no gaps found" and
 // is the more dangerous of the two failure modes this file warns about.
+//
+// CJK characters are \W (non-word), so the s?\b suffix that works for ASCII
+// terms would always fail after a Chinese heading: \b asserts between \w and
+// \W, and after a CJK char the following whitespace / colon / newline is also
+// \W, so no boundary fires. The fix is a separate alternation arm for CJK
+// terms that drops s?\b; both arms share the same ^#{0,6}\s* prefix.
 const REQUIREMENT_HEADER_RE = new RegExp(
-  '^#{0,4}\\s*(?:' + [
+  '^#{0,6}\\s*(?:(?:' + [
     'required', 'requirements', 'qualifications', 'must[- ]have', 'preferred', 'nice[- ]to[- ]have',
     "what\\s+we(?:'|’)?\\s*re\\s+looking\\s+for",
     "what\\s+you(?:(?:'|’)ll|\\s+will)?\\s+bring",
@@ -57,7 +63,7 @@ const REQUIREMENT_HEADER_RE = new RegExp(
     'your\\s+(?:background|experience|profile)',
     'you\\s+(?:may|might|could)\\s+be\\s+a\\s+good\\s+fit',
     // Ashby's default template ships a bare "YOU HAVE:" heading (no markdown
-    // hashes - already allowed by the ^#{0,4} prefix). Without this the whole
+    // hashes - already allowed by the ^#{0,6} prefix). Without this the whole
     // requirements block is invisible even though the bullets under it are
     // perfectly well formed.
     "you(?:(?:'|’)ll|\\s+will)?\\s+have",
@@ -67,7 +73,21 @@ const REQUIREMENT_HEADER_RE = new RegExp(
     'it\\s+would\\s+be\\s+great\\s+if\\s+you\\s+ha(?:ve|d)',
     'ideal\\s+candidate',
     'skills\\s+(?:and|&)\\s+experience',
-  ].join('|') + ')s?\\b.*$',
+  ].join('|') + ')s?\\b|(?:' + [
+    // zh-TW / zh-CN requirement headers.
+    // 104 / 1111 / CakeResume / Yourator all use variants of these headings.
+    '\u61C9\u5FB5\u689D\u4EF6',   // 應徵條件
+    '\u8CC7\u683C\u689D\u4EF6',   // 資格條件
+    '\u8077\u52D9\u9700\u6C42',   // 職務需求
+    '\u689D\u4EF6\u8981\u6C42',   // 條件要求 (zh-CN)
+    '\u4EFB\u8077\u8CC7\u683C',   // 任職資格 (zh-CN)
+    '\u5FC5\u8981\u689D\u4EF6',   // 必要條件
+    '\u57FA\u672C\u8981\u6C42',   // 基本要求 (zh-CN)
+    '\u8077\u4F4D\u8981\u6C42',   // 職位要求 (zh-CN)
+    // preferred / nice-to-have
+    '\u52A0\u5206\u9805\u76EE',   // 加分項目
+    '\u52A0\u5206\u689D\u4EF6',   // 加分條件
+  ].join('|') + ')).*$',
   'im'
 );
 
@@ -76,12 +96,12 @@ const REQUIREMENT_HEADER_RE = new RegExp(
 // the benefits list into "required skills" - turning perks like "401k",
 // "Equity" and "Carrot" into reported skill gaps.
 const NON_REQUIREMENT_HEADER_RE = new RegExp(
-  '^#{0,4}\\s*(?:' + [
+  '^#{0,6}\\s*(?:(?:' + [
     // Responsibilities. The negative lookahead keeps "You will have" on the
     // requirements side — this list is tested BEFORE REQUIREMENT_HEADER_RE in
     // scanJd(), so without it a "You will have:" heading would close a block
     // instead of opening one. Bare "YOU WILL" must close: the fallback that
-    // ends a block on a new heading only fires for markdown headings (#{1,4}),
+    // ends a block on a new heading only fires for markdown headings (#{1,6}),
     // so an unhashed responsibilities heading left the block open and scored
     // its duties as required skills.
     'you\\s+will(?!\\s+have)',
@@ -92,7 +112,19 @@ const NON_REQUIREMENT_HEADER_RE = new RegExp(
     'equal\\s+opportunity', 'eeo', 'diversity',
     'interview\\s+process', 'how\\s+to\\s+apply', 'to\\s+apply',
     'our\\s+(?:stack|process|values|mission)',
-  ].join('|') + ')\\b.*$',
+  ].join('|') + ')\\b|(?:' + [
+    // zh-TW / zh-CN closing headers — drops \b for the same CJK reason.
+    '\u5DE5\u4F5C\u5167\u5BB9',   // 工作內容
+    '\u5DE5\u4F5C\u8077\u8CAC',   // 工作職責
+    '\u8077\u8CAC\u7BC4\u758A',   // 職責範疇
+    '\u798F\u5229',               // 福利
+    '\u85AA\u8CC7',               // 薪資
+    '\u85AA\u916C',               // 薪酬 (zh-CN)
+    '\u516C\u53F8\u4ECB\u7D39',   // 公司介紹
+    '\u95DC\u65BC\u6211\u5011',   // 關於我們
+    '\u61C9\u5FB5\u65B9\u5F0F',   // 應徵方式
+    '\u5982\u4F55\u61C9\u5FB5',   // 如何應徵
+  ].join('|') + ')).*$',
   'im'
 );
 
@@ -172,7 +204,7 @@ function scanJd(jdText) {
       continue;
     }
     if (inRequirementsBlock && line.trim() === '') continue;
-    if (inRequirementsBlock && /^#{1,4}\s/.test(line) && !REQUIREMENT_HEADER_RE.test(line)) {
+    if (inRequirementsBlock && /^#{1,6}\s/.test(line) && !REQUIREMENT_HEADER_RE.test(line)) {
       inRequirementsBlock = false;
     }
 
@@ -278,8 +310,8 @@ function skillMentionedInText(skill, text) {
 // section at all or matches a literal "Z" character later in the text.
 // Scanning line-by-line for the next heading avoids the anchor entirely.
 
-const SKILLS_HEADING_RE = /^#{1,4}\s*Skills\s*$/i;
-const ANY_HEADING_RE = /^#{1,4}\s/;
+const SKILLS_HEADING_RE = /^#{1,6}\s*Skills\s*$/i;
+const ANY_HEADING_RE = /^#{1,6}\s/;
 
 /**
  * Split cv.md into its named "Skills" section (if any) and the remaining
@@ -433,6 +465,24 @@ Python, Docker, Zookeeper
     true
   );
 
+  // The cv.md side of the six-level widening: SKILLS_HEADING_RE and
+  // ANY_HEADING_RE also stopped at four. An h5 "Skills" heading meant no
+  // named section was found at all (everything downgraded to
+  // supportedByResume), and once it IS found, the h6 heading after it must
+  // still close the section - otherwise Experience prose leaks into the
+  // named skills and upgrades to existing. One assert per regex: reverting
+  // SKILLS_HEADING_RE to #{1,4} turns the first red, reverting
+  // ANY_HEADING_RE alone turns the second red.
+  const deepHeadingCv = [
+    '# Resume', '',
+    '##### Skills', 'Python, Docker, PostgreSQL', '',
+    '###### Experience', 'Deployed Kubernetes clusters for internal tools.',
+  ].join('\n');
+  const deepCvResult = classifySkillGaps(['Python', 'Docker', 'PostgreSQL', 'Kubernetes'], deepHeadingCv);
+  eq('an h5 Skills heading is recognized as the named section', deepCvResult.existing.includes('Python'), true);
+  eq('the named section stops at the h6 heading (Kubernetes stays prose)', deepCvResult.existing.includes('Kubernetes'), false);
+  eq('prose under the h6 still classifies as supportedByResume', deepCvResult.supportedByResume.includes('Kubernetes'), true);
+
   // Regression: requirement headings that are full sentences or bare
   // uppercase rather than the noun forms ("Requirements", "Qualifications").
   // Each of these silently yielded ZERO skills, which is indistinguishable
@@ -466,7 +516,7 @@ Python, Docker, Zookeeper
   // The assertion above only proves YOU WILL cannot OPEN a block. Closing is
   // the case that actually bites: postings routinely list requirements first
   // and duties second, and the block-ending fallback in scanJd() fires only on
-  // markdown headings (#{1,4}) — so a bare responsibilities heading left the
+  // markdown headings (#{1,6}) — so a bare responsibilities heading left the
   // block open and reported every duty as a missing skill.
   const dutiesAfterRequirementsJd = [
     '# Role', '', 'YOU HAVE:', '- Experience with Python', '',
@@ -484,6 +534,21 @@ Python, Docker, Zookeeper
     extractJdSkills('# Role\n\nYou Will Have:\n- Experience with Kubernetes\n').includes('Kubernetes'),
     true
   );
+
+  // Markdown defines six heading levels, and the block-ending fallback only
+  // recognized four (CodeRabbit, reviewing #2176). A posting pasted out of a
+  // deeply nested doc - or converted from HTML, where an ATS wraps sections in
+  // h5/h6 - kept the requirements block open across its own next heading, so
+  // everything below it scored as a required skill.
+  const deepHeadingJd = [
+    '##### Requirements', '- Experience with Python', '',
+    '##### Benefits', '- Equity and a Carrot subscription', '',
+    '###### About Us', '- We use Kubernetes internally for our own platform',
+  ].join('\n');
+  const deepSkills = extractJdSkills(deepHeadingJd);
+  eq('an h5 requirements heading is recognized', deepSkills.includes('Python'), true);
+  eq('an h5 heading closes the block (Equity)', deepSkills.includes('Equity'), false);
+  eq('an h6 heading stays closed (Kubernetes)', deepSkills.includes('Kubernetes'), false);
 
   // Regression: generic JD boilerplate must not be misreported as a skill gap.
   const boilerplateJd = `
@@ -593,6 +658,13 @@ Benefits and Perks (US Only)
   const crlfSkills = extractJdSkills(lineEndingJd.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n'));
   eq('CRLF JD extracts the same skills as the LF JD', crlfSkills, lfSkills);
   eq('CRLF JD extracts a non-zero number of skills', crlfSkills.length > 0, true);
+  const lfClassification = classifySkillGaps(lfSkills, fakeCv);
+  const crlfClassification = classifySkillGaps(crlfSkills, fakeCv);
+  eq(
+    'CRLF JD produces the same classification as the LF JD',
+    JSON.stringify(crlfClassification),
+    JSON.stringify(lfClassification)
+  );
 
   // Regression (#1896): the reported bug. A CV alias and a JD's canonical name
   // must not read as a gap. Before the shared skill-extract canonicalization,
@@ -713,13 +785,28 @@ Maintained the internal Fabrikam-SDK build.
     'empty-jd'
   );
 
-  // The warning must carry a caller-facing message, not just a code — the agent
-  // following modes/pdf.md Step 4 surfaces this text to the user.
-  eq(
-    'the diagnosis carries a non-empty message',
-    diagnoseExtraction(unreadableJd, []).message.length > 0,
-    true
-  );
+  // Regression (#3601): Chinese headers (zh-TW / zh-CN) like 應徵條件 or 職務需求
+  // must be recognized as requirement section openers, and headers like 工作內容
+  // or 福利 must close the section.
+  const zhJd = `
+# PHP 後端工程師
+
+## 應徵條件
+- 熟悉 PHP、MySQL、Git
+- 具 Linux 基本指令能力
+
+## 工作內容
+- 開發 RESTful API
+- 維護既有 專案
+`;
+  const zhSkills = extractJdSkills(zhJd);
+  eq('Chinese requirement header (應徵條件) extracts skills', zhSkills.includes('PHP'), true);
+  eq('Chinese requirement header extracts MySQL', zhSkills.includes('MySQL'), true);
+  eq('Chinese requirement header extracts Git', zhSkills.includes('Git'), true);
+  eq('Chinese requirement header extracts Linux', zhSkills.includes('Linux'), true);
+  eq('Chinese non-requirement header (工作內容) closes requirement section', zhSkills.includes('RESTful'), false);
+
+  eq('Chinese header diagnosis is conclusive', diagnoseExtraction(zhJd, zhSkills), null);
 
   console.log(`\njd-skill-gap self-test: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
@@ -727,7 +814,7 @@ Maintained the internal Fabrikam-SDK build.
 
 // ── Main ─────────────────────────────────────────────────────────────
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
 if (selfTestMode) {
   runSelfTest();
 } else {

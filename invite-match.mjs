@@ -30,22 +30,62 @@
  *      node invite-match.mjs --apply [--id N]      (rejection-classified matches only; advances status to Rejected)
  *      node invite-match.mjs --self-test
  *
- * Issue #1495, #2098 — github.com/santifer/career-ops
+ * Issue #1495, #2098 — github.com/career-ops-hq/career-ops
  */
 
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
+import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
 import { resolveColumns, parseTrackerRow } from './tracker-parse.mjs';
+import { getCareerOpsRoot, resolveTrackerPath } from './path-resolver.mjs';
+import { validateFlags } from './lib/cli-flags.mjs';
+import { isMainModule } from './lib/is-main-module.mjs';
 
-const CAREER_OPS = dirname(fileURLToPath(import.meta.url));
-const APPS_FILE = existsSync(join(CAREER_OPS, 'data/applications.md'))
-  ? join(CAREER_OPS, 'data/applications.md')
-  : join(CAREER_OPS, 'applications.md');
+const CAREER_OPS = getCareerOpsRoot();
+const APPS_FILE = resolveTrackerPath(CAREER_OPS);
 
 // --- CLI args ---
 const args = process.argv.slice(2);
+
+// #2854: --help was never checked and an unrecognized/mistyped flag (e.g.
+// `--sumary`) silently fell through instead of failing fast — same shape as
+// scan-ats-full.mjs (#1633/#1635), reply-watch.mjs (#2743/#2745) and
+// dedup-tracker.mjs (#2744/#2746), shared via lib/cli-flags.mjs's
+// validateFlags() (#2775). Order matters: the unrecognized-flag check runs
+// BEFORE the --help check, so `--help --bogus` still errors instead of
+// printing usage and exiting 0.
+const KNOWN_FLAGS = ['--summary', '--self-test', '--file', '--apply', '--id', '--help', '-h'];
+const USAGE = `Usage:
+  node invite-match.mjs < invite.txt          # JSON to stdout
+  node invite-match.mjs --file invite.txt     # read invite text from a file
+  node invite-match.mjs --summary             # human-readable summary instead of JSON
+  node invite-match.mjs --apply [--id N]      # rejection-classified matches only; advances status to Rejected
+  node invite-match.mjs --self-test           # run the built-in self-test suite
+  node invite-match.mjs --help                # print this usage block and exit
+  node invite-match.mjs -h                    # same as --help`;
+
+// Only when invoked as a CLI, not when another script (scan.mjs,
+// detect-reposts.mjs) imports a helper like normalizeCompanyName — otherwise
+// invite-match's flag vocabulary would be validated against the IMPORTING
+// script's own process.argv and reject its perfectly valid flags (e.g.
+// detect-reposts.mjs --window). Same condition as the "Run" guard at the
+// bottom of this file.
+//
+// --file/--id are NOT listed as valueFlags: both are read below via the
+// existing hand-rolled `args.indexOf(...)` lookups (untouched — including
+// their deliberate "a following recognized flag counts as a missing value"
+// guard), which only understand the space-separated `--flag value` form.
+// Declaring them as valueFlags would make validateFlags silently accept
+// `--file=x`/`--id=5` as known, but that form would then fall straight
+// through the untouched indexOf lookups below and be dropped — the same
+// silent-ignore failure mode this issue exists to close, just moved to a
+// different spelling. Leaving them out means that form is rejected loudly
+// as an unrecognized flag instead.
+if (isMainModule(import.meta.url)) {
+  validateFlags(args, KNOWN_FLAGS, USAGE);
+}
+
 const summaryMode = args.includes('--summary');
 const selfTestMode = args.includes('--self-test');
 const fileIdx = args.indexOf('--file');
@@ -100,7 +140,10 @@ function normalizeStatusKey(status) {
 // True legal-entity suffixes, stripped repeatedly (chained) since a name can
 // legitimately carry more than one ("Acme Holdings Inc." → "acme holdings").
 // These are unambiguous enough that removing several in a row is safe.
-const LEGAL_SUFFIXES = [
+// Exported so merge-tracker.mjs can share the vocabulary rather than keep a
+// second copy of it: a private list there is exactly the identity drift #2445
+// set out to remove.
+export const LEGAL_SUFFIXES = [
   'incorporated', 'inc', 'corporation', 'corp', 'company', 'co',
   'limited', 'ltd', 'llc', 'llp', 'lp', 'plc',
 ];
@@ -111,7 +154,7 @@ const LEGAL_SUFFIXES = [
 // chaining their removal risks collapsing two different companies to the
 // same key. Stripped at most once, and only after legal suffixes are gone —
 // never chained with each other or with LEGAL_SUFFIXES.
-const GENERIC_DESCRIPTORS = [
+export const GENERIC_DESCRIPTORS = [
   'group', 'holdings', 'technologies', 'technology', 'solutions',
   'canada', 'international',
 ];
@@ -266,6 +309,40 @@ export function extractDate(text) {
   return null;
 }
 
+// The req branch's optional `id` carries its own leading `\s*` INSIDE the
+// optional group, so exactly one unbounded class follows it.
+//
+// The earlier shape, `\s*(?:id)?[:\s#]*`, let two unbounded quantifiers compete
+// for the same spaces whenever `id` was absent: a run of N spaces can be divided
+// between `\s*` and `[:\s#]*` in N+1 ways, and every division is retried before
+// the match finally fails. That is quadratic on input that never matches —
+// measured on Node 22 with "Requisition " followed by spaces and a non-matching
+// character: 36ms at 8K, 157ms at 16K, 669ms at 32K, ~2.8s at 64K.
+//
+// It is reachable rather than theoretical: analyzeInvite() runs this over whole
+// pasted emails, including `--file` input, so the length is chosen by whoever
+// wrote the message.
+//
+// `(?:\s*id)?[\s:#]*` accepts the same language as `\s*(?:id)?[:\s#]*` — both are
+// "optionally whitespace then `id`, then any run of space/colon/hash", since the
+// id-absent path `\s*[:\s#]*` and a bare `[\s:#]*` accept exactly the same
+// strings — but it has no competing pair: with `id` absent there is a single
+// class scan, and with `id` present the group's `\s*` backtracks against a
+// literal, which is linear. Measured after: 0.25ms at 64K.
+//
+// The `job` branch is upstream's verbatim: `job\s*id[:\s#]*` was never ambiguous
+// (the literal `id` separates its two quantifiers), so it is deliberately left
+// alone. Rewriting it once looked harmless and silently widened what may precede
+// `id` — `job#id 43683` began matching where it had not before.
+//
+// Equivalence was established by differential-testing this against the previous
+// patterns out-of-tree, comparing match index, full match and capture. What is
+// committed here is the distilled result: the guards in the self-test below pin
+// the colon- and hash-before-`id` shapes specifically, because an earlier draft
+// of this fix diverged on exactly those.
+const REQ_ID_LABELLED = /\b(?:req(?:uisition)?\.?(?:\s*id)?[\s:#]*|job\s*id[:\s#]*)([A-Z]{0,3}\d{3,10})\b/i;
+const REQ_ID_PREFIXED = /\b([A-Z]{1,3}\d{5,10})\b/;
+
 /**
  * Best-effort extraction of a req/job-ID-looking token (e.g. "R260013984",
  * "Req 32807", "Job ID: 43683", "JR12352") — present in a minority of
@@ -277,8 +354,7 @@ export function extractDate(text) {
  */
 export function extractReqId(text) {
   if (!text) return null;
-  const m = text.match(/\b(?:req(?:uisition)?\.?\s*(?:id)?[:\s#]*|job\s*id[:\s#]*)([A-Z]{0,3}\d{3,10})\b/i)
-    || text.match(/\b([A-Z]{1,3}\d{5,10})\b/);
+  const m = text.match(REQ_ID_LABELLED) || text.match(REQ_ID_PREFIXED);
   return m ? m[1] : null;
 }
 
@@ -307,10 +383,47 @@ export function extractReqId(text) {
 // the host and the following delimiter, since a URL authority may legally
 // include one (`https://zoom.us:443/j/123456789`) and rejecting it would
 // silently drop otherwise-legitimate invite links.
+// The `isAIInterviewer` flag distinguishes AI-interviewer platforms (#2673)
+// — where the candidate talks live to an AI system instead of a human —
+// from the human-mediated platforms above. It does NOT change
+// extractPlatform()'s return contract (still a plain platform-name string);
+// it's read separately by isAIInterviewerPlatform() below so existing
+// extractPlatform() callers are unaffected.
+//
+// This flag is a best-effort heuristic tied to extractPlatform()'s own
+// first-match resolution, NOT a guarantee that the host is exclusively
+// AI-led: isAIInterviewerPlatform() below derives its answer from whichever
+// pattern actually wins the same ordered scan extractPlatform() runs, so the
+// two agree by construction. Alex/Apriora is flagged `true` for a clean
+// single-link Alex match, but Alex is itself multi-modal in practice — it
+// also sells a "Coordinator" product that schedules and sends calendar
+// invites for human-conducted rounds, so an alex.com link can legitimately
+// appear on an invite to a human interview (#2676 review, santifer). When a
+// human-platform link (Zoom, Teams, etc.) is also present and wins the scan,
+// the match resolves to that human platform and this flag is `false` for
+// that invite, even though alex.com appears somewhere in the text. HireVue
+// is flagged `false` unconditionally: its `hirevue.com` hosts serve
+// on-demand recorded screening, live human-conducted interviews scheduled
+// through the platform, and a separate "AI Interviewer" product, all under
+// the same domain, with no public discriminator (subdomain, path) that
+// reliably distinguishes which modality a given hirevue.com invite link is
+// for — HireVue is still detected and named by extractPlatform(), it just
+// isn't asserted as confirmed-AI. If HireVue later exposes a reliable
+// discriminator, promote its entry then.
 const PLATFORM_URL_PATTERNS = [
-  { name: 'Zoom', pattern: /(?:^|[^\w@./?=&#-])(?:https?:\/\/)?(?:[\w-]+\.)?zoom\.us(?::\d{1,5})?(?:[/?#\s]|$)/i },
-  { name: 'Microsoft Teams', pattern: /(?:^|[^\w@./?=&#-])(?:https?:\/\/)?(?:[\w-]+\.)?teams\.(?:microsoft|live)\.com(?::\d{1,5})?(?:[/?#\s]|$)/i },
-  { name: 'Google Meet', pattern: /(?:^|[^\w@./?=&#-])(?:https?:\/\/)?(?:[\w-]+\.)?meet\.google\.com(?::\d{1,5})?(?:[/?#\s]|$)/i },
+  { name: 'Zoom', pattern: /(?:^|[^\w@./?=&#-])(?:https?:\/\/)?(?:[\w-]+\.)?zoom\.us(?::\d{1,5})?(?:[/?#\s]|$)/i, isAIInterviewer: false },
+  { name: 'Microsoft Teams', pattern: /(?:^|[^\w@./?=&#-])(?:https?:\/\/)?(?:[\w-]+\.)?teams\.(?:microsoft|live)\.com(?::\d{1,5})?(?:[/?#\s]|$)/i, isAIInterviewer: false },
+  { name: 'Google Meet', pattern: /(?:^|[^\w@./?=&#-])(?:https?:\/\/)?(?:[\w-]+\.)?meet\.google\.com(?::\d{1,5})?(?:[/?#\s]|$)/i, isAIInterviewer: false },
+  // Alex/Apriora — AI-interviewer platform, post-rebrand from a 2024 public
+  // glitch incident. `meet.alex.com` and bare `alex.com` are both real
+  // invite hosts; the optional-subdomain shape already covers both, same as
+  // the Zoom pattern above. Always AI-led by product design.
+  { name: 'Alex', pattern: /(?:^|[^\w@./?=&#-])(?:https?:\/\/)?(?:[\w-]+\.)?alex\.com(?::\d{1,5})?(?:[/?#\s]|$)/i, isAIInterviewer: true },
+  // HireVue — multi-modal video-screening platform (on-demand recorded,
+  // live human-conducted, and a separate AI Interviewer product all share
+  // this domain). Detected and named, but NOT asserted as confirmed-AI —
+  // see the comment above the array.
+  { name: 'HireVue', pattern: /(?:^|[^\w@./?=&#-])(?:https?:\/\/)?(?:[\w-]+\.)?hirevue\.com(?::\d{1,5})?(?:[/?#\s]|$)/i, isAIInterviewer: false },
 ];
 
 // A plain phone number, used only when no meeting-platform URL was found —
@@ -332,7 +445,7 @@ const PHONE_PATTERN = /(?:\+?\d{1,3}[\s.-])?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/
  * above and the title/location filters in scan.mjs).
  *
  * @param {string} text - Raw pasted invite/scheduling text.
- * @returns {'Zoom'|'Microsoft Teams'|'Google Meet'|'Phone'|null}
+ * @returns {'Zoom'|'Microsoft Teams'|'Google Meet'|'Alex'|'HireVue'|'Phone'|null}
  */
 export function extractPlatform(text) {
   if (!text) return null;
@@ -341,6 +454,49 @@ export function extractPlatform(text) {
   }
   if (PHONE_PATTERN.test(text)) return 'Phone';
   return null;
+}
+
+/**
+ * Whether the call platform detected in `text` is a CONFIRMED AI-interviewer
+ * platform (#2673) — the candidate has a live conversation with an AI
+ * system rather than a human panel. Currently true only for Alex/Apriora,
+ * and only when Alex is the pattern that WINS the same ordered scan
+ * extractPlatform() runs: the host is not exclusively AI-led, since Alex also
+ * sells a "Coordinator" product that sends invites for human-conducted rounds,
+ * so an invite carrying both a human link and an alex.com link resolves to the
+ * human platform and answers false here. See the comment above
+ * PLATFORM_URL_PATTERNS, which this line used to contradict by calling the
+ * host "single-purpose and always AI-led by product design" (#2676).
+ * HireVue is deliberately excluded even though it's detected by
+ * extractPlatform(): it's a multi-modal platform (on-demand recorded,
+ * live human-conducted, and a separate AI Interviewer product all share the
+ * `hirevue.com` domain) with no public discriminator that reliably tells
+ * which modality a given invite link is for, so asserting AI-led for every
+ * HireVue match would be a guess, not a detection — see the comment above
+ * PLATFORM_URL_PATTERNS. Deliberately a separate boolean helper rather than
+ * a change to extractPlatform()'s return contract, so existing callers
+ * (interview-prep.md's Platform field, analyzeInvite() below) keep working
+ * unmodified. Same "never guessed" discipline as extractPlatform(): pure
+ * pattern matching against the same PLATFORM_URL_PATTERNS table, false when
+ * nothing plausible — or nothing *confirmed* — is found.
+ *
+ * @param {string} text - Raw pasted invite/scheduling text.
+ * @returns {boolean}
+ */
+export function isAIInterviewerPlatform(text) {
+  if (!text) return false;
+  // Must use the SAME first-match iteration as extractPlatform() (#2676
+  // review, santifer): scanning independently for any AI-flagged pattern
+  // anywhere in the text — regardless of which platform extractPlatform()
+  // actually resolves to — let a body containing both a human-platform link
+  // (Zoom, Teams) AND an alex.com link flag as AI even though the platform
+  // that wins is the human one. Deriving from the same match means the two
+  // functions agree by construction: whichever pattern extractPlatform()
+  // would report is exactly the one whose isAIInterviewer flag decides this.
+  for (const { pattern, isAIInterviewer } of PLATFORM_URL_PATTERNS) {
+    if (pattern.test(text)) return isAIInterviewer === true;
+  }
+  return false;
 }
 
 // --- Email-type classification (#2098) ---
@@ -578,6 +734,10 @@ export function analyzeInvite(text, trackerRows = null) {
     date: extractDate(text),
     reqId: extractReqId(text),
     platform: extractPlatform(text),
+    // Additive field (#2673) — does not change the shape of any existing
+    // key above, so existing callers reading `signals.platform` etc. are
+    // unaffected.
+    isAIInterviewer: isAIInterviewerPlatform(text),
   };
   const rows = trackerRows ?? loadTracker();
   const candidates = matchInvite(signals, rows);
@@ -605,6 +765,16 @@ export function applyRejectionStatus(appNumber, options = {}) {
   try {
     const out = execFileSync(process.execPath, [scriptPath, String(appNumber), 'Rejected', '--json'], {
       encoding: 'utf-8', env,
+      // Capture the child's stderr instead of letting execFileSync's default
+      // inherit it. set-status.mjs's failWith writes the machine payload to
+      // stdout AND an `❌ {message}` line to stderr; inherited, that line
+      // printed straight through this function — which by contract returns a
+      // structured result and never speaks for itself — into whatever was
+      // running it. In the test suite a *passing* assertion therefore emitted
+      // `❌ No tracker row with #999`, indistinguishable from a real failure.
+      // Nothing is lost: it is the same string as the JSON `error` field the
+      // CLI already prints as "Apply FAILED: ...".
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     return JSON.parse(out);
   } catch (err) {
@@ -614,7 +784,11 @@ export function applyRejectionStatus(appNumber, options = {}) {
     if (err.stdout) {
       try { return JSON.parse(err.stdout); } catch { /* fall through */ }
     }
-    return { error: err.message, code: 'apply-failed' };
+    // failUsage's non-JSON branch (and any hard crash) leaves stderr as the
+    // only account of what went wrong; now that it is piped, fold it into the
+    // returned error rather than dropping it on the floor.
+    const stderr = typeof err.stderr === 'string' ? err.stderr.trim() : '';
+    return { error: stderr || err.message, code: 'apply-failed' };
   }
 }
 
@@ -783,6 +957,48 @@ function runSelfTest() {
   check(extractReqId('Req ID: R260013984') === 'R260013984', 'extracts "Req ID:" token');
   check(extractReqId('Job ID: 43683') === '43683', 'extracts "Job ID:" token');
   check(extractReqId('no id here') === null, 'returns null when no req-like token is present');
+  check(extractReqId('requisition 26023019') === '26023019', 'extracts a bare "requisition" label');
+  check(extractReqId('Req 32807') === '32807', 'extracts an abbreviated "Req" label');
+  // Four digits, not five: REQ_ID_PREFIXED needs \d{5,10}, so only the labelled
+  // branch can produce this. "JR12352" would pass on the fallback alone and the
+  // assertion would survive the labelled branch breaking entirely.
+  check(extractReqId('Job Requisition ID: JR1234') === 'JR1234', 'extracts a letter-prefixed token via the labelled branch');
+  check(extractReqId('') === null, 'returns null for empty text');
+  check(extractReqId('your job application on 2026-08-16') === null, 'a date after "job" is not a req id');
+
+  // Equivalence guards for the separator rewrite. A punctuation separator before
+  // the literal `id` is exactly where a rewrite can silently widen the grammar:
+  // `\s*(?:id)?` only ever allows WHITESPACE ahead of `id`, so these must stay
+  // as they were. An earlier draft of this fix moved the class in front of the
+  // optional group; the first three below began matching where they had not,
+  // and the fourth kept matching but its capture changed from `id12345` to
+  // `12345` — so the last one guards the captured value, not match/no-match.
+  check(extractReqId('req:id 12345') === null, 'a colon before "id" does not make a req label');
+  check(extractReqId('req#id 999888') === null, 'a hash before "id" does not make a req label');
+  check(extractReqId('job#id 43683') === null, 'the job branch still requires whitespace before "id"');
+  check(extractReqId('req:id12345') === 'id12345', 'req: followed by id12345 captures the whole token, letters included');
+
+  // The separator rewrite is a performance fix, so the guard has to be a clock.
+  // The previous `\s*(?:id)?[:\s#]*` shape backtracked quadratically on THIS
+  // shape of non-matching input — a label, then a long run the class can eat,
+  // then a character that cannot start the capture — costing 669ms here on Node
+  // 22 and ~2.8s at 64K. (Non-matching text in general is not quadratic; it
+  // takes this shape to trigger it.) analyzeInvite() runs extractReqId over
+  // whole pasted emails, so the length is caller-controlled.
+  //
+  // Date.now() measures wall time, so it counts scheduler pauses on a loaded CI
+  // worker as if they were regex work. The threshold therefore has to absorb
+  // that noise without losing the signal, and the 64K probe separates the two
+  // cases widely enough to do both: the rewritten patterns finish in ~0.2ms
+  // against a 1000ms limit (roughly 5000x of slack for scheduling), while the
+  // ambiguous shape costs ~2.8s and still overshoots by ~2.7x. The narrower
+  // 32K/250ms pairing detected the regression just as well but left only ~250ms
+  // of absolute headroom, which is inside what a contended runner can produce.
+  const redosProbe = `Requisition ${' '.repeat(64000)}x`;
+  const redosStart = Date.now();
+  check(extractReqId(redosProbe) === null, 'a long non-matching run still yields null');
+  const redosMs = Date.now() - redosStart;
+  check(redosMs < 1000, `extractReqId does not backtrack quadratically (64K-space probe took ${redosMs}ms, was ~2.8s)`);
 
   // --- extractPlatform ---
   check(extractPlatform('Join via Zoom: https://us02web.zoom.us/j/1234567890') === 'Zoom', 'detects Zoom from a zoom.us URL');
@@ -804,6 +1020,22 @@ function runSelfTest() {
   check(extractPlatform('Join via Zoom: https://zoom.us:443/j/123456789') === 'Zoom', 'detects Zoom from a zoom.us URL with an explicit port');
   check(extractPlatform('Join Microsoft Teams Meeting: https://teams.microsoft.com:8443/l/meetup-join/xyz') === 'Microsoft Teams', 'detects Microsoft Teams from a teams.microsoft.com URL with an explicit port');
   check(extractPlatform('Google Meet: https://meet.google.com:443/abc-defg-hij') === 'Google Meet', 'detects Google Meet from a meet.google.com URL with an explicit port');
+
+  // --- AI-interviewer platforms (#2673) ---
+  check(extractPlatform('Your interview link: https://meet.alex.com/room/abc123') === 'Alex', 'detects Alex from a meet.alex.com URL');
+  check(extractPlatform('Please join at https://alex.com/i/xyz789') === 'Alex', 'detects Alex from a bare alex.com URL');
+  // HireVue is detected and named as a platform...
+  check(extractPlatform('Complete your on-demand interview: https://app.hirevue.com/interview/abc') === 'HireVue', 'detects HireVue from a hirevue.com URL');
+  // ...but is NOT asserted as confirmed-AI: HireVue hosts on-demand
+  // recorded screening, live human-conducted interviews, and a separate AI
+  // Interviewer product on the same domain with no reliable public
+  // discriminator between them (CodeRabbit review on #2676), so asserting
+  // AI-led for every hirevue.com match would be a guess, not a detection.
+  check(isAIInterviewerPlatform('Complete your on-demand interview: https://app.hirevue.com/interview/abc') === false, 'isAIInterviewerPlatform is false for a HireVue URL — modality unconfirmed, not asserted AI-led');
+  check(isAIInterviewerPlatform('Your interview link: https://meet.alex.com/room/abc123') === true, 'isAIInterviewerPlatform is true for an Alex URL');
+  check(isAIInterviewerPlatform('Join via Zoom: https://us02web.zoom.us/j/1234567890') === false, 'isAIInterviewerPlatform is false for a human-mediated Zoom URL');
+  check(isAIInterviewerPlatform('We will call you at (416) 555-0199 for the screen.') === false, 'isAIInterviewerPlatform is false for a plain phone number');
+  check(isAIInterviewerPlatform('') === false, 'isAIInterviewerPlatform is false for empty text');
 
   // --- matchInvite (fixture rows, no real tracker data) ---
   const fixtureRows = [
@@ -977,7 +1209,7 @@ function runSelfTest() {
 }
 
 // --- Run (CLI only; guarded so the module is safely importable for tests) ---
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   if (selfTestMode) {
     runSelfTest();
   } else {
