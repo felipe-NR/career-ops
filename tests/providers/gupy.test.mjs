@@ -1,0 +1,638 @@
+// tests/providers/gupy.test.mjs
+import { pass, fail, ROOT } from '../helpers.mjs';
+import { join } from 'path';
+import { pathToFileURL } from 'url';
+
+console.log('\nProvider — gupy');
+
+try {
+  const mod = await import(pathToFileURL(join(ROOT, 'providers/gupy.mjs')).href);
+  const provider = mod.default;
+  const {
+    normalizeGupyApiJob,
+    buildGupyLocation,
+    parseGupyCareerPageCompany,
+    chooseGupyCompanyName,
+  } = mod;
+
+  if (provider.id === 'gupy') pass('gupy.id is "gupy"');
+  else fail(`gupy.id is ${JSON.stringify(provider.id)}`);
+
+  // ── normalizeGupyApiJob ──────────────────────────────────────────────────
+  const full = normalizeGupyApiJob({
+    name: '  Desenvolvedor Backend Sênior  ',
+    jobUrl: 'https://acme.gupy.io/job/abc123',
+    careerPageName: '  Acme  ',
+    workplaceType: 'remote',
+    city: 'Porto Alegre',
+    state: 'Rio Grande do Sul',
+    country: 'Brasil',
+    description: 'JD body',
+    publishedDate: '2026-08-01T12:00:00.000Z',
+  });
+  if (full && full.title === 'Desenvolvedor Backend Sênior'
+      && full.url === 'https://acme.gupy.io/job/abc123'
+      && full.company === 'Acme'
+      && full.location === 'Remoto, Porto Alegre, Rio Grande do Sul, Brasil'
+      && full.description === 'JD body'
+      && full.postedAt === Date.parse('2026-08-01T12:00:00.000Z')) {
+    pass('normalizeGupyApiJob maps the list-level careerPageName fallback plus the remaining job fields');
+  } else {
+    fail(`normalizeGupyApiJob full row = ${JSON.stringify(full)}`);
+  }
+
+  // The raw API exposes workplaceType as a SINGULAR string. The retired Python
+  // bridge read the plural `workplaceTypes`, which does not exist in the
+  // payload, so every hybrid posting was silently dropped (44% of the platform
+  // in a 2026-08-13 measurement). This pins the singular reader.
+  const hybrid = buildGupyLocation({ workplaceType: 'hybrid', city: 'Porto Alegre' });
+  const onsite = buildGupyLocation({ workplaceType: 'on-site', city: 'São Paulo' });
+  const remote = buildGupyLocation({ workplaceType: 'remote', country: 'Brasil' });
+  if (hybrid === 'Híbrido, Porto Alegre' && onsite === 'Presencial, São Paulo' && remote === 'Remoto, Brasil') {
+    pass('buildGupyLocation reads the SINGULAR workplaceType (hybrid/on-site/remote), not the nonexistent plural');
+  } else {
+    fail(`buildGupyLocation workplaceType = ${JSON.stringify({ hybrid, onsite, remote })}`);
+  }
+
+  const fallback = buildGupyLocation({ isRemoteWork: true, country: 'Brasil' });
+  const unknownType = buildGupyLocation({ workplaceType: 'satellite', city: 'Recife' });
+  const bare = buildGupyLocation({ city: 'Curitiba', state: 'Paraná' });
+  if (fallback === 'Remoto, Brasil' && unknownType === 'satellite, Recife' && bare === 'Curitiba, Paraná') {
+    pass('buildGupyLocation falls back to isRemoteWork, passes unknown types through, and tolerates no type at all');
+  } else {
+    fail(`buildGupyLocation fallbacks = ${JSON.stringify({ fallback, unknownType, bare })}`);
+  }
+
+  // postedAt omitted when absent/unparseable; description key absent when empty.
+  const noDate = normalizeGupyApiJob({ name: 'T', jobUrl: 'https://a.gupy.io/job/1' });
+  const badDate = normalizeGupyApiJob({ name: 'T', jobUrl: 'https://a.gupy.io/job/2', publishedDate: 'not-a-date' });
+  if (noDate && !('postedAt' in noDate) && badDate && !('postedAt' in badDate)) {
+    pass('normalizeGupyApiJob omits postedAt when publishedDate is absent or unparseable');
+  } else {
+    fail(`normalizeGupyApiJob date handling = ${JSON.stringify({ noDate, badDate })}`);
+  }
+  if (noDate && !('description' in noDate)) pass('normalizeGupyApiJob omits the description key when the payload carries none');
+  else fail(`normalizeGupyApiJob description key = ${JSON.stringify(noDate)}`);
+
+  // Missing company survives as '' — scan.mjs fills it downstream rather than
+  // dropping the posting.
+  const noCompany = normalizeGupyApiJob({ name: 'T', jobUrl: 'https://a.gupy.io/job/3' });
+  if (noCompany && noCompany.company === '') pass('normalizeGupyApiJob keeps the posting when careerPageName is absent (company = "")');
+  else fail(`normalizeGupyApiJob no-company = ${JSON.stringify(noCompany)}`);
+
+  // Host-lock + drops.
+  const drops = [
+    normalizeGupyApiJob({ name: 'Off host', jobUrl: 'https://evil.example/job/x' }),
+    normalizeGupyApiJob({ name: 'Lookalike', jobUrl: 'https://notgupy.io/job/x' }),
+    normalizeGupyApiJob({ name: 'Insecure', jobUrl: 'http://a.gupy.io/job/x' }),
+    normalizeGupyApiJob({ name: 'No URL' }),
+    normalizeGupyApiJob({ name: '', jobUrl: 'https://a.gupy.io/job/x' }),
+    normalizeGupyApiJob(null),
+    normalizeGupyApiJob('string'),
+  ];
+  if (drops.every((r) => r === null)) {
+    pass('normalizeGupyApiJob host-locks to *.gupy.io and drops off-host/lookalike/non-https/no-url/empty-title/non-object');
+  } else {
+    fail(`normalizeGupyApiJob drops = ${JSON.stringify(drops)}`);
+  }
+
+  const apex = normalizeGupyApiJob({ name: 'T', jobUrl: 'https://gupy.io/job/apex' });
+  if (apex && apex.url === 'https://gupy.io/job/apex') pass('normalizeGupyApiJob accepts the apex gupy.io host, not only subdomains');
+  else fail(`normalizeGupyApiJob apex = ${JSON.stringify(apex)}`);
+
+  // The board-wide API's careerPageName is actually the configurable
+  // publication label. The canonical employer name is only present in the
+  // career page's server-rendered __NEXT_DATA__ payload.
+  const careerPageHtml = (name, publicationName = name) => `<!doctype html><html><body>
+    <script type="application/json" id="__NEXT_DATA__">${JSON.stringify({
+      props: { pageProps: { careerPage: { name, publicationName } } },
+    })}</script>
+  </body></html>`;
+  const fcamaraHtml = careerPageHtml('  FCamara  ', 'VENHA SER #SANGUELARANJA 🧡🚀');
+  if (parseGupyCareerPageCompany(fcamaraHtml) === 'FCamara') {
+    pass('parseGupyCareerPageCompany reads careerPage.name, not publicationName');
+  } else {
+    fail(`parseGupyCareerPageCompany FCamara = ${JSON.stringify(parseGupyCareerPageCompany(fcamaraHtml))}`);
+  }
+  if (parseGupyCareerPageCompany('<html>no next data</html>') === ''
+      && parseGupyCareerPageCompany('<script id="__NEXT_DATA__">{broken</script>') === ''
+      && parseGupyCareerPageCompany(null) === '') {
+    pass('parseGupyCareerPageCompany fails open on absent, malformed, or non-string HTML');
+  } else {
+    fail('parseGupyCareerPageCompany malformed-input handling drifted');
+  }
+
+  const correctedLabels = [
+    ['VENHA SER #SANGUELARANJA 🧡🚀', 'FCamara', 'FCamara'],
+    ['Carreiras SoftExpert', 'SoftExpert', 'SoftExpert'],
+    ['Faça parte do time do Shop Mercantil', 'Shop Mercantil', 'Shop Mercantil'],
+    ['Aviator, Asas para Voar.', 'Aviator', 'Aviator'],
+    ['Cresol Oficial', 'Cresol', 'Cresol'],
+  ];
+  const guardedLabels = [
+    ['Eletromidia', 'Carreiras Eletromidia', 'Eletromidia'],
+    ['Grupo Suno', 'Sunojobs', 'Grupo Suno'],
+    ['INFLOR', 'INFLOR - Evolução por Natureza', 'INFLOR'],
+    ['Globalweb', 'Seja Globalweb', 'Globalweb'],
+    ['Company Hero', 'Vagas Company Hero', 'Company Hero'],
+    ['Fundação Dom Cabral', 'FUNDACAO DOM CABRAL', 'Fundação Dom Cabral'],
+  ];
+  if (correctedLabels.every(([list, page, expected]) => chooseGupyCompanyName(list, page) === expected)) {
+    pass('chooseGupyCompanyName replaces slogans/recruiting labels with a stronger page name');
+  } else {
+    fail(`chooseGupyCompanyName corrections = ${JSON.stringify(correctedLabels.map(([list, page]) => chooseGupyCompanyName(list, page)))}`);
+  }
+  if (guardedLabels.every(([list, page, expected]) => chooseGupyCompanyName(list, page) === expected)) {
+    pass('chooseGupyCompanyName keeps a clean list label when careerPage.name is noisier or only cosmetically different');
+  } else {
+    fail(`chooseGupyCompanyName guards = ${JSON.stringify(guardedLabels.map(([list, page]) => chooseGupyCompanyName(list, page)))}`);
+  }
+
+  // ── detect() ─────────────────────────────────────────────────────────────
+  const hit = provider.detect({ careers_url: 'https://portal.gupy.io' });
+  const hitApex = provider.detect({ careers_url: 'https://gupy.io' });
+  const hitApi = provider.detect({ api: 'https://employability-portal.gupy.io/api/v1/jobs' });
+  const missHost = provider.detect({ careers_url: 'https://job-boards.greenhouse.io/acme' });
+  const missLookalike = provider.detect({ careers_url: 'https://notgupy.io' });
+  const missNone = provider.detect({ name: 'no urls' });
+  if (hit?.url && hitApex?.url && hitApi?.url && missHost === null && missLookalike === null && missNone === null) {
+    pass('detect() claims gupy.io careers_url/api (apex + subdomain) and ignores other hosts');
+  } else {
+    fail(`detect() = ${JSON.stringify({ hit, hitApex, hitApi, missHost, missLookalike, missNone })}`);
+  }
+
+  // ── fetch() ──────────────────────────────────────────────────────────────
+  const mk = (i, company = `Co ${i}`) => ({
+    name: `Role ${i}`,
+    jobUrl: `https://acme.gupy.io/job/x${i}`,
+    careerPageName: company,
+    workplaceType: 'remote',
+    country: 'Brasil',
+    publishedDate: '2026-08-01T00:00:00.000Z',
+  });
+
+  // REGRESSION: FCamara's list record reports its recruiting slogan as
+  // careerPageName. Resolve the board once (not once per job) and replace both
+  // rows with the SSR careerPage.name.
+  const companyPageCalls = [];
+  const canonicalJobs = await provider.fetch({ keywords: ['Backend'], max_pages: 1 }, {
+    fetchJson: async () => ({
+      data: [
+        { ...mk(1, 'VENHA SER #SANGUELARANJA 🧡🚀'), jobUrl: 'https://fcamara.gupy.io/job/1' },
+        { ...mk(2, 'VENHA SER #SANGUELARANJA 🧡🚀'), jobUrl: 'https://fcamara.gupy.io/job/2' },
+      ],
+      pagination: { total: 2 },
+    }),
+    fetchText: async (url) => {
+      companyPageCalls.push(url);
+      return careerPageHtml('FCamara', 'VENHA SER #SANGUELARANJA 🧡🚀');
+    },
+  });
+  if (companyPageCalls.length === 1
+      && companyPageCalls[0] === 'https://fcamara.gupy.io/'
+      && canonicalJobs.every((job) => job.company === 'FCamara')) {
+    pass('fetch() resolves careerPage.name once per board and replaces the publication slogan');
+  } else {
+    fail(`fetch() company enrichment = ${JSON.stringify({ companyPageCalls, companies: canonicalJobs.map((j) => j.company) })}`);
+  }
+
+  // A markup change must retain the API label rather than blanking or dropping
+  // otherwise valid jobs.
+  const fallbackJobs = await provider.fetch({ keywords: ['Backend'], max_pages: 1 }, {
+    fetchJson: async () => ({ data: [mk(3, 'Fallback Label')], pagination: { total: 1 } }),
+    fetchText: async () => '<html>changed markup</html>',
+  });
+  if (fallbackJobs.length === 1 && fallbackJobs[0].company === 'Fallback Label') {
+    pass('fetch() keeps careerPageName when the canonical page name cannot be parsed');
+  } else {
+    fail(`fetch() company fallback = ${JSON.stringify(fallbackJobs)}`);
+  }
+
+  // verify-portals passes ctx.maxPages for a bounded liveness probe. Company
+  // enrichment must not turn that one-page probe into a per-board HTML fan-out.
+  let probeCompanyCalls = 0;
+  const probeJobs = await provider.fetch({ keywords: ['Backend'], max_pages: 1 }, {
+    maxPages: 1,
+    fetchJson: async () => ({ data: [mk(4, 'Probe Label')], pagination: { total: 1 } }),
+    fetchText: async () => { probeCompanyCalls++; return careerPageHtml('Probe Canonical'); },
+  });
+  if (probeCompanyCalls === 0 && probeJobs[0]?.company === 'Probe Label') {
+    pass('fetch() skips canonical-name fan-out during ctx.maxPages health probes');
+  } else {
+    fail(`fetch() probe enrichment = ${JSON.stringify({ probeCompanyCalls, probeJobs })}`);
+  }
+
+  // One sweep per keyword — Gupy's jobName matches titles narrowly, so terms
+  // must NOT be joined into a single query the way a16z-speedrun-talent does.
+  const kwCalls = [];
+  const kwCtx = {
+    fetchJson: async (url) => {
+      kwCalls.push(url);
+      return { data: [mk(kwCalls.length)], pagination: { total: 1 } };
+    },
+  };
+  const kwJobs = await provider.fetch({ name: 'Gupy', keywords: ['Backend', 'Full Stack'], max_pages: 3 }, kwCtx);
+  const kwNames = kwCalls.map((u) => new URL(u).searchParams.get('jobName'));
+  if (kwCalls.length === 2 && kwNames[0] === 'Backend' && kwNames[1] === 'Full Stack' && kwJobs.length === 2) {
+    pass('fetch() sweeps each keyword separately instead of joining them into one query');
+  } else {
+    fail(`fetch() keyword sweeps = ${JSON.stringify({ kwNames, jobs: kwJobs.length })}`);
+  }
+
+  // The same posting routinely matches several keywords — dedup by URL.
+  const dupCtx = { fetchJson: async () => ({ data: [mk(1), mk(1)], pagination: { total: 2 } }) };
+  const dupJobs = await provider.fetch({ keywords: ['A', 'B'], max_pages: 1 }, dupCtx);
+  if (dupJobs.length === 1) pass('fetch() dedups by posting URL across keywords and within a page');
+  else fail(`fetch() dedup = ${JSON.stringify(dupJobs.map((j) => j.url))}`);
+
+  // offset/limit pagination, stopping once offset covers pagination.total.
+  const pageCalls = [];
+  const pageCtx = {
+    fetchJson: async (url) => {
+      pageCalls.push(url);
+      const offset = Number(new URL(url).searchParams.get('offset'));
+      const data = Array.from({ length: offset === 0 ? 100 : 20 }, (_, i) => mk(offset + i));
+      return { data, pagination: { total: 120 } };
+    },
+  };
+  const paged = await provider.fetch({ keywords: ['X'], max_pages: 5 }, pageCtx);
+  const offsets = pageCalls.map((u) => new URL(u).searchParams.get('offset'));
+  const limits = pageCalls.map((u) => new URL(u).searchParams.get('limit'));
+  if (pageCalls.length === 2 && offsets[0] === '0' && offsets[1] === '100'
+      && limits.every((l) => l === '100') && paged.length === 120) {
+    pass('fetch() paginates by offset/limit=100 and stops on a short page');
+  } else {
+    fail(`fetch() pagination = ${JSON.stringify({ offsets, limits, jobs: paged.length })}`);
+  }
+
+  // REGRESSION (2026-08-13): pagination.total reports the PAGE SIZE, not the
+  // result-set size — the live API answers total=100 at every offset of a
+  // 370-posting keyword. Trusting it (the way a16z-speedrun-talent trusts
+  // `total_pages`, which is an honest page count) broke every sweep after page
+  // 0 and dropped 205 of 548 deduped postings in silence, 14 of them inside the
+  // active window. A short page is the only end-of-feed signal this API gives.
+  const lyingCalls = [];
+  const lyingCtx = {
+    fetchJson: async (url) => {
+      lyingCalls.push(url);
+      const offset = Number(new URL(url).searchParams.get('offset'));
+      const remaining = Math.max(0, 370 - offset);
+      const data = Array.from({ length: Math.min(100, remaining) }, (_, i) => mk(offset + i));
+      return { data, pagination: { total: 100, limit: 100, offset } };
+    },
+  };
+  const lying = await provider.fetch({ keywords: ['Desenvolvedor'], max_pages: 5 }, lyingCtx);
+  if (lyingCalls.length === 4 && lying.length === 370) {
+    pass('fetch() ignores a pagination.total that reports the page size and paginates until a short page');
+  } else {
+    fail(`fetch() lying-total = ${JSON.stringify({ calls: lyingCalls.length, jobs: lying.length })}`);
+  }
+
+  // verify-portals.mjs probes with ctx.maxPages:1 under a 4-request sentinel.
+  // This provider paginates per (keyword × page), so the budget must be a TOTAL
+  // for the call: read per keyword, a 10-keyword entry would spend 10 requests
+  // on a 1-page probe, trip the sentinel, and get a live board reported as a
+  // cut-off.
+  const probeCalls = [];
+  const probeWarnings = [];
+  let probed;
+  const beforeProbe = console.error;
+  try {
+    console.error = (...args) => probeWarnings.push(args.join(' '));
+    probed = await provider.fetch({ keywords: ['A', 'B', 'C', 'D', 'E'], max_pages: 5 }, {
+      maxPages: 1,
+      fetchJson: async (url) => {
+        probeCalls.push(url);
+        return { data: Array.from({ length: 100 }, (_, i) => mk(i)), pagination: { total: 100 } };
+      },
+    });
+  } finally {
+    console.error = beforeProbe;
+  }
+  if (probeCalls.length === 1 && probed.length === 100) {
+    pass('fetch() honors ctx.maxPages as a total page budget across keyword sweeps');
+  } else {
+    fail(`fetch() ctx.maxPages = ${JSON.stringify({ calls: probeCalls.length, jobs: probed?.length })}`);
+  }
+  if (probeWarnings.length === 0) pass('fetch() stays quiet when ctx.maxPages truncates — a probe is not a misconfiguration');
+  else fail(`probe emitted warnings: ${JSON.stringify(probeWarnings)}`);
+
+  // max_pages caps the sweep and warns.
+  const capCalls = [];
+  const capCtx = {
+    fetchJson: async (url) => {
+      capCalls.push(url);
+      return { data: Array.from({ length: 100 }, (_, i) => mk(capCalls.length * 1000 + i)), pagination: { total: 5000 } };
+    },
+  };
+  const capWarnings = [];
+  const realConsoleError = console.error;
+  let capped;
+  try {
+    console.error = (...args) => capWarnings.push(args.join(' '));
+    capped = await provider.fetch({ keywords: ['X'], max_pages: 2 }, capCtx);
+  } finally {
+    console.error = realConsoleError;
+  }
+  if (capCalls.length === 2 && capped.length === 200) pass('fetch() stops a never-ending feed at max_pages');
+  else fail(`fetch() cap = ${JSON.stringify({ calls: capCalls.length, jobs: capped?.length })}`);
+  if (capWarnings.some((w) => w.includes('truncated at max_pages=2'))) pass('fetch() warns when max_pages truncates a keyword sweep');
+  else fail(`truncation warning missing; captured = ${JSON.stringify(capWarnings)}`);
+
+  // Optional filters ride along as comma-joined params; unset ones are absent.
+  const paramCalls = [];
+  const paramCtx = { fetchJson: async (url) => { paramCalls.push(url); return { data: [], pagination: { total: 0 } }; } };
+  await provider.fetch({
+    keywords: ['X'],
+    workplace_types: ['remote', 'hybrid'],
+    job_types: ['vacancy_type_effective'],
+    state: 'RS',
+    country: 'Brasil',
+    max_pages: 1,
+  }, paramCtx);
+  const p = new URL(paramCalls[0]).searchParams;
+  if (p.get('workplaceTypes') === 'remote,hybrid' && p.get('jobTypes') === 'vacancy_type_effective'
+      && p.get('state') === 'RS' && p.get('country') === 'Brasil') {
+    pass('fetch() sends workplace_types/job_types comma-joined plus state/country');
+  } else {
+    fail(`fetch() params = ${JSON.stringify(Object.fromEntries(p))}`);
+  }
+
+  const bareCalls = [];
+  const bareCtx = { fetchJson: async (url) => { bareCalls.push(url); return { data: [], pagination: { total: 0 } }; } };
+  await provider.fetch({ keywords: ['X'], workplace_types: [], max_pages: 1 }, bareCtx);
+  const bp = new URL(bareCalls[0]).searchParams;
+  if (!bp.has('workplaceTypes') && !bp.has('jobTypes') && !bp.has('state') && !bp.has('country')) {
+    pass('fetch() omits optional params entirely when unset or empty');
+  } else {
+    fail(`fetch() bare params = ${JSON.stringify(Object.fromEntries(bp))}`);
+  }
+
+  // Empty feed returns [] after one call per keyword.
+  const emptyCalls = [];
+  const emptyCtx = { fetchJson: async (url) => { emptyCalls.push(url); return { data: [], pagination: { total: 0 } }; } };
+  const empty = await provider.fetch({ keywords: ['X'], max_pages: 3 }, emptyCtx);
+  if (emptyCalls.length === 1 && empty.length === 0) pass('fetch() returns [] after one call on an empty feed');
+  else fail(`empty feed = ${JSON.stringify({ calls: emptyCalls.length, jobs: empty.length })}`);
+
+  // A malformed payload on the only sweep leaves nothing to keep, so it still
+  // surfaces as an error rather than an empty board.
+  let threw = null;
+  try {
+    await provider.fetch({ keywords: ['X'], max_pages: 1 }, { fetchJson: async () => ({ unexpected: true }) });
+  } catch (err) {
+    threw = err.message;
+  }
+  if (threw && threw.includes('unexpected API response')) pass('fetch() surfaces a malformed payload instead of returning a silent empty board');
+  else fail(`malformed payload handling = ${JSON.stringify(threw)}`);
+
+  // ── per-sweep failure isolation ──────────────────────────────────────────
+  // Each keyword is an independent query, so a dead sweep must not discard the
+  // sweeps that already completed correctly.
+  const isoCalls = [];
+  const isoWarnings = [];
+  let isolated;
+  const beforeIso = console.error;
+  try {
+    console.error = (...args) => isoWarnings.push(args.join(' '));
+    isolated = await provider.fetch({ keywords: ['A', 'B', 'C'], max_pages: 1 }, {
+      sleep: async () => {},
+      fetchJson: async (url) => {
+        const kw = new URL(url).searchParams.get('jobName');
+        isoCalls.push(kw);
+        if (kw === 'B') throw Object.assign(new Error('HTTP 404'), { status: 404 });
+        return { data: [mk(kw === 'A' ? 1 : 2)], pagination: { total: 1 } };
+      },
+    });
+  } finally {
+    console.error = beforeIso;
+  }
+  if (isolated.length === 2 && isoCalls.join(',') === 'A,B,C'
+      && isoWarnings.some((w) => w.includes('sweep "B" stopped'))) {
+    pass('fetch() keeps the sweeps that succeeded when one keyword fails, and warns about the one that did not');
+  } else {
+    fail(`sweep isolation = ${JSON.stringify({ jobs: isolated.length, calls: isoCalls, warnings: isoWarnings })}`);
+  }
+
+  // A failure mid-sweep keeps the pages already in hand (newest-first, so a
+  // partial sweep is the freshest N pages) and moves on.
+  const partialCalls = [];
+  let partial;
+  const beforePartial = console.error;
+  try {
+    console.error = () => {};
+    partial = await provider.fetch({ keywords: ['A'], max_pages: 5 }, {
+      sleep: async () => {},
+      fetchJson: async (url) => {
+        const offset = Number(new URL(url).searchParams.get('offset'));
+        partialCalls.push(offset);
+        if (offset > 0) throw Object.assign(new Error('HTTP 500'), { status: 500 });
+        return { data: Array.from({ length: 100 }, (_, i) => mk(i)), pagination: { total: 100 } };
+      },
+    });
+  } finally {
+    console.error = beforePartial;
+  }
+  // page 0 once, then page 1 three times (1 attempt + 2 retries on a 5xx).
+  if (partial.length === 100 && partialCalls.length === 4) {
+    pass('fetch() keeps the pages already read when a sweep dies mid-pagination');
+  } else {
+    fail(`mid-sweep partial = ${JSON.stringify({ jobs: partial.length, calls: partialCalls })}`);
+  }
+
+  // Every sweep dead = outage, moved endpoint or changed payload. Must rethrow
+  // the ORIGINAL error object: verify-portals' classifyFetchError reads
+  // err.status to tell server/auth/slug_gone apart, and portal-health escalates
+  // on that classification.
+  let allFailed = null;
+  let attempts = 0;
+  const beforeAll = console.error;
+  try {
+    console.error = () => {};
+    await provider.fetch({ keywords: ['A', 'B'], max_pages: 2 }, {
+      sleep: async () => {},
+      fetchJson: async () => { attempts++; throw Object.assign(new Error('HTTP 503'), { status: 503 }); },
+    });
+  } catch (err) {
+    allFailed = err;
+  } finally {
+    console.error = beforeAll;
+  }
+  // 2 keywords × 1 page each (the sweep breaks on failure) × 3 attempts.
+  if (allFailed && allFailed.status === 503 && attempts === 6) {
+    pass('fetch() rethrows the original error — status intact — when no sweep produced a page');
+  } else {
+    fail(`all-failed = ${JSON.stringify({ status: allFailed?.status, message: allFailed?.message, attempts })}`);
+  }
+
+  // The probe budget counts pages ATTEMPTED, so a broken board cannot make a
+  // 1-page probe walk every keyword.
+  let brokenProbeCalls = 0;
+  let brokenProbeErr = null;
+  const beforeBroken = console.error;
+  try {
+    console.error = () => {};
+    await provider.fetch({ keywords: ['A', 'B', 'C', 'D', 'E'], max_pages: 5 }, {
+      maxPages: 1,
+      sleep: async () => {},
+      fetchJson: async () => { brokenProbeCalls++; throw Object.assign(new Error('HTTP 404'), { status: 404 }); },
+    });
+  } catch (err) {
+    brokenProbeErr = err;
+  } finally {
+    console.error = beforeBroken;
+  }
+  if (brokenProbeCalls === 1 && brokenProbeErr?.status === 404) {
+    pass('fetch() spends the ctx.maxPages budget on failed pages too, so a broken board still costs one request');
+  } else {
+    fail(`broken probe = ${JSON.stringify({ calls: brokenProbeCalls, status: brokenProbeErr?.status })}`);
+  }
+
+  // Keywords fall back to config/profile.yml target_roles (the vdab.mjs
+  // pattern) instead of a hardcoded ['Desenvolvedor'] — a pt-BR targeting
+  // decision that used to live in this system-layer file.
+  const profileKeywords = (await import(pathToFileURL(join(ROOT, 'providers/_profile-keywords.mjs')).href))
+    .resolveProfileKeywords(join(ROOT, 'config/profile.yml'));
+  const defCalls = [];
+  const defCtx = { fetchJson: async (url) => { defCalls.push(url); return { data: [], pagination: { total: 0 } }; } };
+  let defThrew = null;
+  try {
+    await provider.fetch({ name: 'Gupy', max_pages: 1 }, defCtx);
+  } catch (err) {
+    defThrew = err.message;
+  }
+  const defNames = defCalls.map((u) => new URL(u).searchParams.get('jobName'));
+  if (profileKeywords.length > 0) {
+    // This repo has a profile — the fallback must use it verbatim.
+    if (defThrew === null && defNames.length === profileKeywords.length
+        && defNames.every((n, i) => n === profileKeywords[i])) {
+      pass('fetch() falls back to config/profile.yml target_roles when neither keywords[] nor q: is set');
+    } else {
+      fail(`profile fallback = ${JSON.stringify({ defThrew, defNames, profileKeywords })}`);
+    }
+  } else if (defThrew && defThrew.includes('no keywords[]/q:')) {
+    // No profile on this machine — must fail loudly, never sweep a guessed term.
+    pass('fetch() throws when there are no keywords[]/q: and no profile target_roles to fall back to');
+  } else {
+    fail(`profile fallback (no profile) = ${JSON.stringify({ defThrew, defNames })}`);
+  }
+
+  // Explicit keywords[] always beat the profile fallback.
+  const overrideCalls = [];
+  await provider.fetch({ keywords: ['Só Esta'], max_pages: 1 }, {
+    fetchJson: async (url) => { overrideCalls.push(url); return { data: [], pagination: { total: 0 } }; },
+  });
+  if (overrideCalls.length === 1 && new URL(overrideCalls[0]).searchParams.get('jobName') === 'Só Esta') {
+    pass('fetch() prefers the entry keywords[] over the profile fallback');
+  } else {
+    fail(`keyword override = ${JSON.stringify(overrideCalls.map((u) => new URL(u).searchParams.get('jobName')))}`);
+  }
+
+  // ── recency window ───────────────────────────────────────────────────────
+  const DAY = 86_400_000;
+  const dated = (i, ageDays) => ({
+    name: `Role ${i}`,
+    jobUrl: `https://acme.gupy.io/job/w${i}`,
+    careerPageName: 'Co',
+    workplaceType: 'remote',
+    publishedDate: new Date(Date.now() - ageDays * DAY).toISOString(),
+  });
+
+  // since_days is the entry's OWN window: it must both stop the sweep and drop
+  // the stale tail of the last page, because nothing downstream knows about it.
+  const winCalls = [];
+  const windowed = await provider.fetch({ keywords: ['X'], since_days: 14, max_pages: 5 }, {
+    fetchJson: async (url) => {
+      winCalls.push(url);
+      const offset = Number(new URL(url).searchParams.get('offset'));
+      // Page 0: half inside the window, half far outside it. Page 1 would be
+      // older still — the sweep must never ask for it.
+      const data = Array.from({ length: 100 }, (_, i) => dated(offset + i, offset + i < 50 ? 3 : 90));
+      return { data, pagination: { total: 100 } };
+    },
+  });
+  if (winCalls.length === 1 && windowed.length === 50) {
+    pass('since_days stops the sweep at the window edge and drops the stale tail of the page');
+  } else {
+    fail(`since_days = ${JSON.stringify({ calls: winCalls.length, jobs: windowed.length })}`);
+  }
+
+  // ctx.sinceMs is the RUN's window and wins over since_days — an operator who
+  // widened the run must not silently get the entry's narrower default.
+  const ctxWinCalls = [];
+  const ctxWindowed = await provider.fetch({ keywords: ['X'], since_days: 14, max_pages: 5 }, {
+    sinceMs: Date.now() - 60 * DAY,
+    fetchJson: async (url) => {
+      ctxWinCalls.push(url);
+      const offset = Number(new URL(url).searchParams.get('offset'));
+      const data = Array.from({ length: offset === 0 ? 100 : 10 }, (_, i) => dated(offset + i, 30));
+      return { data, pagination: { total: 100 } };
+    },
+  });
+  if (ctxWinCalls.length === 2 && ctxWindowed.length === 110) {
+    pass('ctx.sinceMs overrides since_days — postings inside the run window survive the entry default');
+  } else {
+    fail(`ctx.sinceMs precedence = ${JSON.stringify({ calls: ctxWinCalls.length, jobs: ctxWindowed.length })}`);
+  }
+
+  // A ctx window is early-stop ONLY. scan.mjs applies postedDateFilter itself,
+  // and re-deriving that floor here risks sub-second drift dropping a boundary
+  // posting the scanner wanted.
+  const ctxNoFilter = await provider.fetch({ keywords: ['X'], max_pages: 1 }, {
+    sinceMs: Date.now() - 14 * DAY,
+    fetchJson: async () => ({ data: [dated(1, 3), dated(2, 400)], pagination: { total: 2 } }),
+  });
+  if (ctxNoFilter.length === 2) pass('ctx.sinceMs never filters postings out — it only stops pagination');
+  else fail(`ctx.sinceMs filtering = ${JSON.stringify(ctxNoFilter.map((j) => j.url))}`);
+
+  // Undated postings pass the window (scan.mjs's "don't penalize missing data").
+  const undated = await provider.fetch({ keywords: ['X'], since_days: 14, max_pages: 1 }, {
+    fetchJson: async () => ({
+      data: [{ name: 'No date', jobUrl: 'https://acme.gupy.io/job/nd', careerPageName: 'Co' }, dated(9, 400)],
+      pagination: { total: 2 },
+    }),
+  });
+  if (undated.length === 1 && undated[0].url === 'https://acme.gupy.io/job/nd') {
+    pass('since_days keeps undated postings and drops the dated ones outside the window');
+  } else {
+    fail(`undated handling = ${JSON.stringify(undated.map((j) => j.url))}`);
+  }
+
+  // since_days must mean exactly what --since means: a floor truncated to UTC
+  // midnight (scan.mjs's resolveEffectiveAfter). An exact `now - days` stamp
+  // would make the same config return different results by the hour.
+  const noonUtc = Date.parse('2026-08-13T12:34:56Z');
+  const cutoff14 = mod.sinceDaysToCutoffMs(14, noonUtc);
+  if (cutoff14 === Date.parse('2026-07-30T00:00:00Z')
+      && mod.sinceDaysToCutoffMs(null, noonUtc) === null
+      && mod.sinceDaysToCutoffMs(1e15, noonUtc) === null) {
+    pass('sinceDaysToCutoffMs truncates to UTC midnight like --since, and survives an out-of-range day count');
+  } else {
+    fail(`sinceDaysToCutoffMs = ${JSON.stringify({ cutoff14, iso: cutoff14 && new Date(cutoff14).toISOString() })}`);
+  }
+
+  // A page of nothing but undated postings must not stop pagination.
+  if (mod.pageIsPastWindow([{ }, { }], Date.now()) === false
+      && mod.pageIsPastWindow([dated(1, 400)].map((d) => ({ postedAt: Date.parse(d.publishedDate) })), Date.now()) === true
+      && mod.pageIsPastWindow([{ postedAt: Date.now() }], null) === false) {
+    pass('pageIsPastWindow ignores undated pages, trips on a fully stale one, and no-ops without a window');
+  } else {
+    fail('pageIsPastWindow behaviour drifted');
+  }
+
+  // q: accepted as a single-keyword form.
+  const qCalls = [];
+  const qCtx = { fetchJson: async (url) => { qCalls.push(url); return { data: [], pagination: { total: 0 } }; } };
+  await provider.fetch({ q: 'AI Engineer', max_pages: 1 }, qCtx);
+  if (new URL(qCalls[0]).searchParams.get('jobName') === 'AI Engineer') pass('fetch() accepts q: as a single-keyword form');
+  else fail(`q form = ${JSON.stringify(new URL(qCalls[0]).searchParams.get('jobName'))}`);
+
+  // Every request must hit the pinned API host over HTTPS (SSRF guard).
+  if (qCalls.every((u) => u.startsWith('https://employability-portal.gupy.io/api/v1/jobs?'))) {
+    pass('fetch() pins every request to https://employability-portal.gupy.io/api/v1/jobs');
+  } else {
+    fail(`api host = ${JSON.stringify(qCalls)}`);
+  }
+} catch (err) {
+  fail(`gupy provider test threw: ${err.message}`);
+}
