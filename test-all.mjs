@@ -128,6 +128,56 @@ function discoverTests(dir) {
   return out;
 }
 
+// Strip comment lines before grepping a discovered suite's source for a
+// forbidden call: a suite that only MENTIONS a call in a comment (e.g.
+// documenting why it doesn't make it) must not be flagged.
+//
+// Removed: whole-line `//` comments, and every line of a `/* ... */` block,
+// including unstarred interior lines. Kept: any code that shares a line with a
+// comment, on either side of it, so a real call can never hide behind one:
+// `/* why */ process.exit(1)` and `*gen() { finish() }` are still scanned.
+// Trailing `//` comments on a code line are deliberately still scanned,
+// erring toward a loud false positive, never a silent miss.
+//
+// Comment markers inside a multi-line template literal are text, not
+// comments, and an interpolation there IS executable — so nothing is stripped
+// while the kept code has an odd number of unescaped backticks (quoted
+// strings and trailing `//` comments excluded from the count). An opener that
+// never closes is not a comment we understand either; the raw source is
+// scanned instead. Both limits fail loud, never silent.
+function stripCommentLines(src) {
+  let inBlock = false;
+  let inTemplate = false;
+  const kept = [];
+  for (const line of src.split('\n')) {
+    let rest = line;
+    if (!inTemplate) {
+      if (inBlock) {
+        const end = rest.indexOf('*/');
+        if (end === -1) continue;
+        inBlock = false;
+        rest = rest.slice(end + 2);
+      }
+      // A block comment opening at the start of the (remaining) line: drop it,
+      // then look again — `/* a */ /* b */ code` keeps `code`.
+      let open;
+      while ((open = /^\s*\/\*/.exec(rest))) {
+        const end = rest.indexOf('*/', open[0].length);
+        if (end === -1) { inBlock = true; rest = ''; break; }
+        rest = rest.slice(end + 2);
+      }
+      if (/^\s*(\/\/|$)/.test(rest)) continue;
+    }
+    kept.push(rest);
+    const code = rest
+      .replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g, '')
+      .replace(/\/\/.*$/, '');
+    if (((code.match(/(?<!\\)`/g) ?? []).length) % 2 === 1) inTemplate = !inTemplate;
+  }
+  if (inBlock) return src;
+  return kept.join('\n');
+}
+
 async function runDiscovered(filter = null) {
   let files = discoverTests(TESTS_DIR);
   if (filter) {
@@ -146,7 +196,9 @@ async function runDiscovered(filter = null) {
     // process.exit() inside one would terminate test-all mid-run with a forged
     // exit code — every later section (and finish()) would silently never run.
     // Refuse to import such a suite and fail loudly instead (#1916 regression).
-    if (/\bprocess\.exit\s*\(/.test(src)) {
+    // stripCommentLines() first: a suite that only MENTIONS process.exit() in
+    // a comment (e.g. documenting why it doesn't call it) must not be flagged.
+    if (/\bprocess\.exit\s*\(/.test(stripCommentLines(src))) {
       fail(`${rel} calls process.exit() — discovered suites must use pass/fail from tests/helpers.mjs and never exit`);
       continue;
     }
@@ -181,7 +233,10 @@ async function runDiscovered(filter = null) {
     // finish() prints the global summary and exits — inside a discovered suite
     // it forges the verdict line and decapitates every suite sorting after it,
     // sailing past the process.exit() check above (the exit lives in helpers).
-    if (/\bfinish\s*\(\s*\)/.test(src)) {
+    // Same stripCommentLines() treatment as the process.exit() guard above: a
+    // suite that only MENTIONS finish() in a comment (e.g. documenting why it
+    // doesn't call it) must not be flagged.
+    if (/\bfinish\s*\(\s*\)/.test(stripCommentLines(src))) {
       fail(`${f.slice(ROOT.length + 1)} calls finish() — only test-all.mjs may print the global summary; discovered suites use pass/fail and return`);
       continue;
     }
@@ -417,6 +472,9 @@ const scripts = [
   // default portals.yml because end-user workspaces often have a real user-layer
   // portals file that would trigger a live remote sweep during tests.
   { name: 'verify-portals.mjs --file .tmp-test-missing-portals.yml', expectExit: 0 },
+  // Pins #4250: --help must exit fast on its own, never fall through to the
+  // full network sweep (which is what "no output for minutes" looks like).
+  { name: 'verify-portals.mjs --help', expectExit: 0 },
   { name: 'update-system.mjs check', expectExit: 0 },
   { name: 'seed-fixture.mjs --self-test', expectExit: 0 },
   { name: 'archive-posting.mjs --help', expectExit: 0 },
@@ -1993,6 +2051,30 @@ const allowedFiles = [
   'dashboard/internal/ui/screens/progress.go',
 ];
 
+// Paths added for #4131, checked by EXACT match rather than folded into
+// allowedFiles above. allowedFiles.some(a => file.includes(a)) is a
+// substring test, which every pre-existing entry already relies on (a
+// nested path containing e.g. "README.md" is exempted too) — widening that
+// same list with plain root-relative basenames like 'funding.json' or
+// 'HIRED.md' would also silently exempt an unrelated tracked file that
+// merely shares a basename, such as a future fixtures/funding.json or
+// snapshots/tests/hired-wall.test.mjs (luochen211, #4144 review). These are
+// the ones this PR actually intends to allow, so they get the tighter
+// check instead of loosening the shared one.
+const exactAllowedFiles = new Set([
+  // GitHub Sponsors funding target + Codex plugin manifest (#4131) — same
+  // maintainer-credit shape as the .claude-plugin/.github/plugin ones above.
+  'funding.json', '.codex-plugin/plugin.json',
+  // Hired Wall: celebrates a hire with a link back to the project, and the
+  // scripts/tests that build and cover that feature necessarily carry the
+  // same URL (#4131).
+  'HIRED.md', 'hired-wall-build.mjs', 'tests/hired-wall.test.mjs', 'tests/project-identity.test.mjs',
+  // Dashboard credit string (#4131) — same substring-vs-exact reasoning as
+  // the entries above; the pre-existing pipeline.go/progress.go entries stay
+  // in the broad allowedFiles list above since they predate this PR.
+  'dashboard/internal/ui/screens/stats.go',
+]);
+
 // Build pathspec for git grep — only scan tracked files matching these
 // extensions. This is what `grep -rn` was trying to do, but git-aware:
 // untracked files (debate artifacts, AI tool scratch, local plans/) and
@@ -2004,15 +2086,45 @@ const grepPathspecs = scanExtensions.map(e => `*.${e}`);
 
 let leakFound = false;
 for (const pattern of leakPatterns) {
-  const result = run(
-    'git',
-    ['grep', '-n', pattern, '--', ...grepPathspecs],
-    { stdio: ['pipe', 'pipe', 'ignore'] }
-  );
+  // --name-only -z NUL-delimits filenames only — no line number, no matching
+  // line, nothing but the path is ever needed here. A prior version used
+  // plain `-n -z` (path\0line\0matching-line\n) and split on '\n' first to
+  // recover records, but a tracked filename containing a literal embedded
+  // newline byte — legal on Linux and macOS — would then be truncated at
+  // that byte, before the real end of the record. A truncated name that
+  // happens to collide with an allowed one (or with the empty string) would
+  // then skip the warning for whatever the file actually leaks (CodeRabbit,
+  // #4144 review). `--name-only -z` sidesteps the ambiguity entirely: NUL is
+  // the only delimiter, so a raw newline inside a filename is preserved
+  // verbatim and splitting purely on '\0' recovers the exact path every time.
+  //
+  // execFileSync() directly, NOT the shared run() helper: run()'s documented
+  // contract is "trimmed stdout" (tests/helpers.mjs), and .trim() strips
+  // whitespace from the very ends of the whole NUL-joined blob. A tracked
+  // filename that legitimately starts or ends with a space — legal on
+  // Linux/macOS — would have that space silently stripped if it happened to
+  // be the first or last match, corrupting the one thing this whole fix
+  // exists to keep exact (CodeRabbit, #4144 review).
+  let result = null;
+  try {
+    result = execFileSync(
+      'git',
+      ['grep', '--name-only', '-z', pattern, '--', ...grepPathspecs],
+      { cwd: ROOT, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'ignore'] },
+    );
+  } catch (error) {
+    // git grep exits 1 with no matches — nothing to warn about. Any other
+    // failure (a real git error, or the 30s timeout above firing) must not
+    // be swallowed the same way: silently treating it as "no matches" would
+    // let this whole check report a false "no leaks" on a run where it
+    // never actually completed (CodeRabbit, #4144 review).
+    if (error?.status !== 1) throw error;
+  }
   if (result) {
-    for (const line of result.split('\n')) {
-      const file = line.split(':')[0];
+    for (const file of result.split('\0')) {
+      if (!file) continue;
       if (allowedFiles.some(a => file.includes(a))) continue;
+      if (exactAllowedFiles.has(file)) continue;
       if (file.includes('dashboard/go.mod')) continue;
       warn(`Possible personal data in ${file}: "${pattern}"`);
       leakFound = true;
@@ -4039,7 +4151,7 @@ if (
 // loudly otherwise), so the list can only shrink. Denominator asserted: the
 // locale walk must find the known files, or the whole check is blind.
 {
-  const FROZEN_OFERTA = new Set(['da', 'es', 'pl', 'pt', 'ua']);
+  const FROZEN_OFERTA = new Set(['da', 'pl', 'pt', 'ua']);
   const REQUIRED_HEADINGS = ['## A)', '## B)', '## C)', '## D)', '## E)', '## F)', '## G)', '## Risk Summary', '## H)'];
   const REQUIRED_LABELS = ['**Date:**', '**URL:**', '**Archetype:**', '**Score:**', '**Legitimacy:**', '**PDF:**'];
   const withOferta = readdirSync(join(ROOT, 'modes'), { withFileTypes: true })
@@ -7787,6 +7899,9 @@ try {
   } else {
     fail('remote-title rescue changed behavior for non-remote or malformed titles');
   }
+
+  // location_filter.strict coverage lives in tests/location-filter-strict.test.mjs.
+  // Keep this central harness focused on broad scan integration behavior.
 
   if (
     shouldDedupScanHistoryRow({ firstSeen: '2026-06-01', status: 'added' }, { recheckAfterDays: 30, today: '2026-06-10' }) === true &&
@@ -13153,7 +13268,11 @@ try {
     join(withMcp, '.claude', 'settings.json'),
     JSON.stringify({ mcpServers: { playwright: { command: 'npx', args: ['@playwright/mcp', '--headless'] } } }),
   );
-  const b = JSON.parse(run(NODE, ['doctor.mjs', '--json', '--target', withMcp], doctorEnv) || '{}');
+  const b = JSON.parse(execFileSync(
+    NODE,
+    [join(ROOT, 'doctor.mjs'), '--json', '--target', withMcp],
+    { ...doctorEnv, cwd: withMcp, encoding: 'utf8' },
+  ) || '{}');
   if (Array.isArray(b.warnings) && !b.warnings.some((w) => /playwright mcp/i.test(w))) {
     pass('Playwright MCP configured → no warning');
   } else {
@@ -13168,7 +13287,11 @@ try {
     join(withLocalMcp, '.claude', 'settings.local.json'),
     JSON.stringify({ mcpServers: { browser: { command: 'npx', args: ['@playwright/mcp'] } } }),
   );
-  const c = JSON.parse(run(NODE, ['doctor.mjs', '--json', '--target', withLocalMcp], doctorEnv) || '{}');
+  const c = JSON.parse(execFileSync(
+    NODE,
+    [join(ROOT, 'doctor.mjs'), '--json', '--target', withLocalMcp],
+    { ...doctorEnv, cwd: withLocalMcp, encoding: 'utf8' },
+  ) || '{}');
   if (Array.isArray(c.warnings) && !c.warnings.some((w) => /playwright mcp/i.test(w))) {
     pass('Playwright MCP configured via .claude/settings.local.json → no warning');
   } else {
@@ -15944,6 +16067,36 @@ try {
     } else {
       fail('the web _days key mapping no longer lines up with the core cadenceDefaults keys (#2369)');
     }
+    // The defaults are a CONSTANT, so an empty tracker must not withhold them.
+    // That is the first-run state (onboarding creates a header-only tracker),
+    // and it is precisely when the web form has no profile overrides to fall
+    // back on, so a missing baseline leaves every field blank (#4005).
+    const emptyEmitted = analyzeFromContent(
+      '# Applications Tracker\n\n| # | Date | Company | Role | Score | Status | PDF | Report | Notes |\n' +
+      '|---|------|---------|------|-------|--------|-----|--------|-------|\n',
+      '',
+    );
+    const emptyDefaults = emptyEmitted?.cadenceDefaults;
+    // Value equality, not just shape. Returning CADENCE here (defaults PLUS the
+    // user's profile overrides) would satisfy every structural check while
+    // handing the form one of the user's own overrides as the baseline they
+    // would be reverting to, which is the #2369 mistake exactly.
+    const emptyOk = emptyDefaults && typeof emptyDefaults === 'object'
+      && Object.keys(emptyDefaults).length === cadKeys.length
+      && cadKeys.every((k) => Number.isInteger(emptyDefaults[k]) && emptyDefaults[k] === DEFAULT_CADENCE[k]);
+    if (emptyOk) {
+      pass('followup-cadence emits cadenceDefaults even when the tracker is empty (#4005)');
+    } else {
+      fail(`an empty tracker withholds cadenceDefaults, so a first-run web cadence form renders blank (#4005): ${JSON.stringify(emptyEmitted)}`);
+    }
+    // The error must SURVIVE alongside the defaults: stats.mjs short-circuits on
+    // result.error before it reads entries, so dropping it while adding the
+    // defaults would hand that caller a payload with no entries to iterate.
+    if (emptyEmitted?.error === 'No applications found in tracker.') {
+      pass('the empty-tracker payload still reports its error alongside the defaults (#4005)');
+    } else {
+      fail(`the empty-tracker error was lost, so callers that branch on result.error now fall through (#4005): ${JSON.stringify(emptyEmitted)}`);
+    }
     const webFollowups = join(ROOT, 'web', 'src', 'lib', 'followups.ts');
     if (existsSync(webFollowups)) {
       const webSrc = readFileSync(webFollowups, 'utf-8');
@@ -16191,13 +16344,13 @@ try {
         if (existsSync(join(ROOT, 'web', 'tests', 'lib'))) {
           fail('web/tests/lib contains no *.test.mjs — the #2185 unit suites are not being gated');
         }
-      } else if (run(NODE, ['--test', ...webUnits], { timeout: 180000 }) !== null) {
+      } else if (run(NODE, ['--experimental-strip-types', '--test', ...webUnits], { timeout: 180000 }) !== null) {
         pass('web pdf write-scope unit suites pass (#2185)');
       } else {
         // The signal distinguishes a timeout/kill from an assertion failure —
         // run()'s default 30s is short for six suites in one child process.
         const killed = lastRunFailure()?.signal;
-        fail(`web pdf write-scope unit suites failed${killed ? ` (killed: ${killed})` : ''} (run: node --test ${webUnits.join(' ')})`);
+        fail(`web pdf write-scope unit suites failed${killed ? ` (killed: ${killed})` : ''} (run: node --experimental-strip-types --test ${webUnits.join(' ')})`);
       }
 
       // Parity: everything web/package.json would run must be something we DO run.
@@ -17273,6 +17426,23 @@ try {
     fail(`appendScanRunSummary wrong file contents: ${JSON.stringify(runRows)}`);
   }
   rmSync(runsTmp, { recursive: true, force: true });
+
+  // Scan-run persistence, missing parent directory: filePath nested inside a
+  // directory that does not exist yet, proving appendScanRunSummary creates its
+  // own parent rather than relying on a folder some earlier step happened to make.
+  {
+    const nestedTmp = mkdtempSync(join(tmpdir(), 'scanruns-nested-'));
+    const nestedFile = join(nestedTmp, 'nested', 'deep', 'scan-runs.tsv');
+    appendScanRunSummary(counters, nestedFile);
+    const nestedRows = readFileSync(nestedFile, 'utf-8').trim().split('\n');
+    if (nestedRows[0] === SCAN_RUNS_HEADER.trim() && nestedRows.length === 2
+      && nestedRows[1].startsWith('2026-07-03T14:02:11Z\tcompleted\t45\t3\t120\t')) {
+      pass('appendScanRunSummary creates a missing nested parent directory and writes header + row');
+    } else {
+      fail(`appendScanRunSummary with missing nested parent: wrong file contents: ${JSON.stringify(nestedRows)}`);
+    }
+    rmSync(nestedTmp, { recursive: true, force: true });
+  }
 
   // computeRunStats: header-name parsing, torn rows skipped, failed runs
   // excluded from averages.
@@ -18711,6 +18881,26 @@ try {
   }
 } catch (e) {
   fail(`jd-archive wiring check: ${e.message}`);
+}
+
+console.log('\n76. README sponsors section is generated from .github/sponsors.json');
+try {
+  // The Sponsors section of README.md (heading, intro, per-sponsor rows,
+  // independence note, placement between the community section and the value
+  // proposition) and the per-sponsor rows of every README.<lang>.md are
+  // rendered by .github/scripts/sponsors.mjs; a hand edit on either side is
+  // drift that the next --write would silently undo, so the two are pinned
+  // together here. The script also refuses a logo that is not a file inside
+  // docs/sponsors/ (no hotlinking), a non-https sponsor URL, and a sponsor URL
+  // carrying tracking parameters.
+  const r = spawnSync(process.execPath, [join(ROOT, '.github', 'scripts', 'sponsors.mjs'), '--check'], { cwd: ROOT, encoding: 'utf8' });
+  if (r.status === 0) {
+    pass('README.md and every README.<lang>.md match .github/sponsors.json');
+  } else {
+    fail(`README sponsors drifted or invalid: ${String(r.stderr || r.stdout).trim().split('\n')[0]}`);
+  }
+} catch (e) {
+  fail(`sponsors check: ${e.message}`);
 }
 
 await runDiscovered();
