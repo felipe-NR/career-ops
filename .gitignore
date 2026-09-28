@@ -86,7 +86,7 @@ plugins.lock
 
 # Generated
 .resolved-prompt-*
-node_modules/
+node_modules
 bun.lock
 # Working copy the test suite makes under the repo root (test-all.mjs
 # `mkdtempSync(join(ROOT, '.tmp-script-test-'))`). A clean run deletes it; a
@@ -224,6 +224,27 @@ reports/**/*.md
 !interview-prep/sessions/.gitkeep
 !interview-prep/sessions/README.md
 !writing-samples/README.md
+!web/package-lock.json
+!test-fixtures/**
+!documents/.gitkeep
+!documents/README.md
+
+# Added by career-ops update-system.mjs.
+# System-owned ignore rules that were missing from this file. Your own rules
+# are never modified, reordered or removed: the updater only appends patterns
+# it cannot already find somewhere in this file. Reordering these lines, or
+# moving them elsewhere in the file, is safe and will not bring them back.
+# Deleting or commenting one out is not: they are system-owned, several of
+# them guard files holding personal data, and the next update re-adds any
+# that is no longer present as a live pattern.
+# Atomic-write temp files, the sibling of the backups above and from the same
+# two writers: `.{name}.{pid}.{ts}.{uuid}.tmp` (tracker-utils.mjs
+# writeFileAtomic, web/src/lib/core/safe-write.ts atomicWrite). They exist only
+# between the write and the rename — but a rename that throws (Windows
+# destination-handle contention, ENOSPC, a read-only mount) leaves one behind
+# holding a byte-for-byte copy of cv.md / profile.yml / portals.yml, under a
+# name the `*.bak*` rule does not match. Same PII, same reflexive `git add .`.
+*.tmp*
 !web/package-lock.json
 !test-fixtures/**
 !documents/.gitkeep
