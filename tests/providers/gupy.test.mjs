@@ -10,7 +10,7 @@ console.log('\nProvider — gupy');
 try {
   const mod = await import(pathToFileURL(join(ROOT, 'providers/gupy.mjs')).href);
   const provider = mod.default;
-  const { normalizeGupyApiJob, buildGupyLocation, extractGupyRows } = mod;
+  const { normalizeGupyApiJob, buildGupyLocation, extractGupyRows, isConfidentialGupyJob } = mod;
   // Every fetch() below runs with a no-op clock, so the inter-request delay
   // and retry backoff never wait on a real timer.
   const noSleep = async () => {};
@@ -118,6 +118,27 @@ try {
     fail(`normalizeGupyApiJob confidential = ${JSON.stringify({ confidential, notConfidential })}`);
   }
 
+  // The portal.gupy.io payload carries no isConfidentialCareerPage flag. Rows
+  // shaped like the live ones (2026-10-06): the placeholder logo, or a bare
+  // "Confidencial" / "Empresa Confidencial" name with no logo.
+  const placeholderLogo = 'https://career-page-prod.gupy.io/default-creation-images/confidencial_logo.png';
+  const confidentialNoFlag = [
+    { name: 'Dev', jobUrl: 'https://confg.gupy.io/job/a', careerPageName: 'Confidencial', careerPageLogo: placeholderLogo },
+    { name: 'Dev', jobUrl: 'https://acme.gupy.io/job/b', careerPageName: 'Acme Holding', careerPageLogo: placeholderLogo },
+    { name: 'Dev', jobUrl: 'https://acme.gupy.io/job/c', careerPageName: 'Empresa Confidencial', careerPageLogo: '' },
+    { name: 'Dev', jobUrl: 'https://acme.gupy.io/job/d', careerPageName: '  confidencial ' },
+  ].map(normalizeGupyApiJob);
+  const attributed = [
+    { name: 'Dev', jobUrl: 'https://acme.gupy.io/job/e', careerPageName: 'Confidencial Seguros', careerPageLogo: '' },
+    { name: 'Dev', jobUrl: 'https://acme.gupy.io/job/f', careerPageName: 'Acme', careerPageLogo: 'https://attachments.gupy.io/production/companies/1/logo.png' },
+  ].map(normalizeGupyApiJob);
+  if (confidentialNoFlag.every((j) => j === null) && attributed.every((j) => j !== null)
+      && isConfidentialGupyJob({ isConfidentialCareerPage: true }) && !isConfidentialGupyJob(null)) {
+    pass('normalizeGupyApiJob drops flagless confidential rows by placeholder logo or exact name, keeps names that only contain the word');
+  } else {
+    fail(`flagless confidential = ${JSON.stringify({ confidentialNoFlag, attributed })}`);
+  }
+
   // ── extractGupyRows: empty vs broken ─────────────────────────────────────
   const emptyRows = extractGupyRows({ data: [], pagination: { total: 0 } }, 'X', 0);
   if (Array.isArray(emptyRows) && emptyRows.length === 0) pass('extractGupyRows returns [] for a present-and-empty data array');
@@ -150,7 +171,9 @@ try {
   const hitExplicit = provider.detect({ name: 'Gupy', provider: 'gupy' });
   const hitPortal = provider.detect({ careers_url: 'https://portal.gupy.io' });
   const hitPortalPath = provider.detect({ careers_url: 'https://portal.gupy.io/job-search/term=dev' });
-  const hitApi = provider.detect({ api: 'https://employability-portal.gupy.io/api/v1/jobs' });
+  const hitApi = provider.detect({ api: 'https://portal.gupy.io/api/job-search/jobs' });
+  // The retired host stays claimed, so an old `api:` entry still resolves.
+  const hitLegacyApi = provider.detect({ api: 'https://employability-portal.gupy.io/api/v1/jobs' });
   const misses = [
     provider.detect({ careers_url: 'https://acme.gupy.io' }),
     provider.detect({ careers_url: 'https://gupy.io' }),
@@ -165,11 +188,11 @@ try {
     provider.detect({ name: 'no urls' }),
     provider.detect(null),
   ];
-  if (hitExplicit?.url === 'https://employability-portal.gupy.io/api/v1/jobs'
-      && hitPortal?.url && hitPortalPath?.url && hitApi?.url && misses.every((m) => m === null)) {
+  if (hitExplicit?.url === 'https://portal.gupy.io/api/job-search/jobs'
+      && hitPortal?.url && hitPortalPath?.url && hitApi?.url && hitLegacyApi?.url && misses.every((m) => m === null)) {
     pass('detect() claims provider: gupy and the platform-wide hosts, never a tenant, the apex, non-HTTPS, lookalikes or junk');
   } else {
-    fail(`detect() = ${JSON.stringify({ hitExplicit, hitPortal, hitPortalPath, hitApi, misses })}`);
+    fail(`detect() = ${JSON.stringify({ hitExplicit, hitPortal, hitPortalPath, hitApi, hitLegacyApi, misses })}`);
   }
 
   // ── fetch() ──────────────────────────────────────────────────────────────
@@ -347,9 +370,10 @@ try {
     max_pages: 1,
   }, paramCtx);
   const p = new URL(paramCalls[0]).searchParams;
-  if (p.get('workplaceTypes') === 'remote,hybrid' && p.get('jobTypes') === 'vacancy_type_effective'
+  if (p.get('workplaceType') === 'remote,hybrid' && p.get('type') === 'vacancy_type_effective'
+      && !p.has('workplaceTypes') && !p.has('jobTypes')
       && p.get('state') === 'Rio Grande do Sul' && p.get('country') === 'Brasil') {
-    pass('fetch() sends workplace_types/job_types comma-joined plus state/country');
+    pass('fetch() sends workplace_types/job_types comma-joined as workplaceType/type, plus state/country');
   } else {
     fail(`fetch() params = ${JSON.stringify(Object.fromEntries(p))}`);
   }
@@ -358,7 +382,7 @@ try {
   const bareCtx = { sleep: noSleep, fetchJson: async (url) => { bareCalls.push(url); return { data: [], pagination: { total: 0 } }; } };
   await provider.fetch({ gupy: { keywords: ['X'], workplace_types: [] }, max_pages: 1 }, bareCtx);
   const bp = new URL(bareCalls[0]).searchParams;
-  if (!bp.has('workplaceTypes') && !bp.has('jobTypes') && !bp.has('state') && !bp.has('country')) {
+  if (!bp.has('workplaceType') && !bp.has('type') && !bp.has('state') && !bp.has('country')) {
     pass('fetch() omits optional params entirely when unset or empty');
   } else {
     fail(`fetch() bare params = ${JSON.stringify(Object.fromEntries(bp))}`);
@@ -713,8 +737,8 @@ try {
   else fail(`q form = ${JSON.stringify(new URL(qCalls[0]).searchParams.get('jobName'))}`);
 
   // Every request must hit the pinned API host over HTTPS (SSRF guard).
-  if (qCalls.every((u) => u.startsWith('https://employability-portal.gupy.io/api/v1/jobs?'))) {
-    pass('fetch() pins every request to https://employability-portal.gupy.io/api/v1/jobs');
+  if (qCalls.every((u) => u.startsWith('https://portal.gupy.io/api/job-search/jobs?'))) {
+    pass('fetch() pins every request to https://portal.gupy.io/api/job-search/jobs');
   } else {
     fail(`api host = ${JSON.stringify(qCalls)}`);
   }

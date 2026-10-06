@@ -5,10 +5,17 @@ import { resolveProfileKeywords } from './_profile-keywords.mjs';
 /** @typedef {import('./_types.js').Provider} Provider */
 
 // Gupy provider: board-wide job_boards: feed over the Brazilian Gupy ATS.
-//   https://employability-portal.gupy.io/api/v1/jobs  (public, zero-auth)
-// Response shape: { data: [ { name, jobUrl, careerPageName, city, state,
-//   country, workplaceType, publishedDate, description,
-//   isConfidentialCareerPage, ... } ], pagination: { total, offset, limit } }
+//   https://portal.gupy.io/api/job-search/jobs  (public, zero-auth)
+// Response shape: { data: [ { name, jobUrl, careerPageName, careerPageLogo,
+//   city, state, type, workplaceType, publishedDate, description, ... } ],
+//   pagination: { total, offset, limit } }
+//
+// This is the endpoint portal.gupy.io's own search page calls. The previous
+// one, employability-portal.gupy.io/api/v1/jobs, answers 404 for every query
+// as of 2026-10-06. The move renamed two filters (`workplaceTypes` →
+// `workplaceType`, `jobTypes` → `type`, both still comma-joined), dropped
+// `country` from the payload (the `country` param is accepted and ignored),
+// and dropped the `isConfidentialCareerPage` flag (see normalizeGupyApiJob).
 //
 // Target list: `job_boards:`. Gupy hosts the career pages of thousands of
 // Brazilian employers (<tenant>.gupy.io) and exposes one public search across
@@ -18,15 +25,16 @@ import { resolveProfileKeywords } from './_profile-keywords.mjs';
 //
 // Source Indexing Policy (checked 2026-09-28):
 //   - Rule 1: postings are the employers' own, published on their Gupy career
-//     page, free to read and apply to. Rows flagged isConfidentialCareerPage
-//     carry "Confidencial" instead of an employer and are dropped (about 7% of
-//     a 100-row sample).
+//     page, free to read and apply to. Confidential rows carry "Confidencial"
+//     instead of an employer and are dropped (about 7% of a 100-row sample).
 //   - Rule 2: jobUrl is the posting on the employer's own <tenant>.gupy.io
-//     career page, the shortest path to the employer the payload offers.
+//     career page, the shortest path to the employer the payload offers. The
+//     current feed also mixes in a few postings hosted off Gupy (vaga-ja.com,
+//     5 of 469 rows on 2026-10-06); isSafeGupyUrl drops them.
 //   - Rule 3: results are ordered publishedDate-descending; the payload
 //     carries no sponsored or promoted flag.
-//   - Rule 6: employability-portal.gupy.io/robots.txt answers 404 (no rules);
-//     portal.gupy.io/robots.txt is `User-agent: *` / `Disallow:` (allow all).
+//   - Rule 6: portal.gupy.io/robots.txt is `User-agent: *` / `Disallow:`
+//     (allow all; re-checked 2026-10-06 against the new endpoint's host).
 //
 // Paginated via offset/limit. limit caps at 100 server-side (limit=200 is a
 // 400). Every keyword is swept independently and results are deduped by
@@ -36,7 +44,8 @@ import { resolveProfileKeywords } from './_profile-keywords.mjs';
 // size, not the result-set size: at limit=100 it answers 100 at every offset
 // however deep the feed goes (measured 2026-08-13: jobName=Desenvolvedor
 // returned 370 postings across 4 pages, and every page reported total=100;
-// re-checked 2026-09-28). Reading it as a count ends every sweep after page 0.
+// re-checked 2026-09-28, and again on the new endpoint 2026-10-06). Reading it
+// as a count ends every sweep after page 0.
 // A short page is the only end-of-feed signal this API gives.
 //
 // The endpoint answers the shared default user-agent with no Origin/Referer
@@ -68,10 +77,19 @@ import { resolveProfileKeywords } from './_profile-keywords.mjs';
 //   - `max_pages` is per keyword, so the entry's ceiling is
 //     max_pages × keywords.length.
 
-const API_BASE = 'https://employability-portal.gupy.io/api/v1/jobs';
-const API_HOST = 'employability-portal.gupy.io';
+const API_BASE = 'https://portal.gupy.io/api/job-search/jobs';
+const API_HOST = 'portal.gupy.io';
+// The retired API host. Still claimed by detect() so an entry whose `api:`
+// points at it keeps resolving to this provider (and so to API_BASE).
+const LEGACY_API_HOST = 'employability-portal.gupy.io';
 // Hosts whose URL means "the whole Gupy platform", as opposed to one tenant.
-const PLATFORM_HOSTS = new Set(['portal.gupy.io', API_HOST]);
+const PLATFORM_HOSTS = new Set([API_HOST, LEGACY_API_HOST]);
+// The placeholder logo Gupy assigns a confidential career page. With the
+// isConfidentialCareerPage flag gone from the payload, this is the structural
+// signal left; the careerPageName check below is the fallback for rows that
+// carry no logo at all.
+const CONFIDENTIAL_LOGO_SUFFIX = '/confidencial_logo.png';
+const CONFIDENTIAL_NAME_RE = /^(empresa\s+)?confidencial$/i;
 const PER_PAGE = 100; // server-side maximum
 const DEFAULT_MAX_PAGES = 5; // × PER_PAGE = 500 postings per keyword
 // Runaway bound, not a coverage target. Iteration stops on a short page, so on
@@ -266,9 +284,11 @@ export function buildGupyLocation(j) {
  *                  the cross-listing fingerprint work without a second request.
  *   - postedAt:    `publishedDate` ISO → epoch ms (omitted when unparseable).
  *
- * A posting flagged `isConfidentialCareerPage`, or with a blank
- * `careerPageName`, names no employer and is dropped (Source Indexing Policy
- * rule 1). scan.mjs copies `company` into the pipeline as-is, so an empty one
+ * A confidential posting names no employer and is dropped (Source Indexing
+ * Policy rule 1). The payload stopped carrying `isConfidentialCareerPage` when
+ * the API moved, so confidentiality is read from Gupy's placeholder logo or a
+ * "Confidencial" / "Empresa Confidencial" career page name; the old flag is
+ * still honored if it comes back. A blank `careerPageName` is dropped too. scan.mjs copies `company` into the pipeline as-is, so an empty one
  * would reach it unattributed.
  *
  * @param {any} j
@@ -276,7 +296,7 @@ export function buildGupyLocation(j) {
  */
 export function normalizeGupyApiJob(j) {
   if (!j || typeof j !== 'object') return null;
-  if (j.isConfidentialCareerPage === true) return null;
+  if (isConfidentialGupyJob(j)) return null;
 
   const title = typeof j.name === 'string' ? j.name.trim() : '';
   if (!title) return null;
@@ -298,6 +318,19 @@ export function normalizeGupyApiJob(j) {
   const postedAt = toEpochMs(j.publishedDate);
   if (postedAt !== undefined) job.postedAt = postedAt;
   return job;
+}
+
+/**
+ * True for a posting whose career page hides the employer.
+ *
+ * @param {any} j
+ */
+export function isConfidentialGupyJob(j) {
+  if (j?.isConfidentialCareerPage === true) return true;
+  const logo = typeof j?.careerPageLogo === 'string' ? j.careerPageLogo.trim() : '';
+  if (logo.endsWith(CONFIDENTIAL_LOGO_SUFFIX)) return true;
+  const name = typeof j?.careerPageName === 'string' ? j.careerPageName.trim() : '';
+  return CONFIDENTIAL_NAME_RE.test(name);
 }
 
 /** @type {Provider} */
@@ -379,8 +412,8 @@ export default {
           offset: String(page * PER_PAGE),
           limit: String(PER_PAGE),
         });
-        if (workplaceTypes) params.set('workplaceTypes', workplaceTypes);
-        if (jobTypes) params.set('jobTypes', jobTypes);
+        if (workplaceTypes) params.set('workplaceType', workplaceTypes);
+        if (jobTypes) params.set('type', jobTypes);
         if (state) params.set('state', state);
         if (country) params.set('country', country);
 
