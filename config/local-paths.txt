@@ -1,0 +1,5 @@
+# local-paths.txt — files this checkout owns, that upstream does not ship.
+# Format and rules: config/local-paths.example.txt
+
+# Project-scoped Claude Code plugins (linkedin-agent from felipe-NR/linkedin-agent-skill)
+.claude/settings.json

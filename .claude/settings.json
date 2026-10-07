@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "linkedin-agent@linkedin-agent-skill": true
+  },
+  "extraKnownMarketplaces": {
+    "linkedin-agent-skill": {
+      "source": {
+        "source": "github",
+        "repo": "felipe-NR/linkedin-agent-skill"
+      }
+    }
+  }
+}

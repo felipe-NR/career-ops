@@ -258,3 +258,6 @@ documents/*
 # PII (e.g. cv/jane-doe-master-cv.pdf). #1723
 data/intake-state.json
 data/agent-inbox.md
+
+# Fork-owned: declares files the updater must never touch (see config/local-paths.example.txt)
+!config/local-paths.txt
