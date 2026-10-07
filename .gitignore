@@ -320,3 +320,6 @@ batch/tmp/
 !documents/.gitkeep
 !documents/README.md
 data/agent-inbox.md
+
+# Fork-owned: declares files the updater must never touch (see config/local-paths.example.txt)
+!config/local-paths.txt
