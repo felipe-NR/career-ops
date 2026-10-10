@@ -1691,8 +1691,14 @@ export async function loadConfiguredTemplateVariants({ profilePath } = {}) {
       // no-exemption behavior only for that exact compatibility case.
       return configuredVariants;
     }
-    if (err?.code === 'ERR_MODULE_NOT_FOUND'
-        && /Cannot find package ['"]js-yaml['"]/.test(err?.message || '')) {
+    // A local module cv-templates.mjs imports can be missing too: an updater
+    // older than the fallback-closure walk checks out the new cv-templates.mjs
+    // without the files it newly imports. The normal checkout supplies them,
+    // so read the profile without cv-templates.mjs for this pass.
+    const missingLocalModule = err?.code === 'ERR_MODULE_NOT_FOUND'
+      && String(err?.url || '').startsWith('file:');
+    if (missingLocalModule || (err?.code === 'ERR_MODULE_NOT_FOUND'
+        && /Cannot find package ['"]js-yaml['"]/.test(err?.message || ''))) {
       if (!profilePath || !existsSync(profilePath)) return configuredVariants;
       return configuredTemplateVariantsFromProfileSource(readFileSync(profilePath, 'utf8'));
     }
@@ -1900,7 +1906,8 @@ export function wasEverShippedUpstream(candidatePath, ref = 'FETCH_HEAD', revLis
 // Files the self-reexec stage must check out so the TARGET update-system.mjs
 // and its pre-checkout dynamic imports can load. resolveReexecCheckout derives
 // static imports from the fetched source; this list covers literal dynamic
-// imports and their local dependencies because the parser cannot see them.
+// imports because the parser cannot see them. Each entry's own static imports
+// are then walked like the entry point's, so a dependency need not be listed.
 export const REEXEC_FALLBACK_FILES = [
   'update-system.mjs',
   'scaffolder/bin/skill-entrypoints.mjs',
@@ -1922,42 +1929,33 @@ export function relativeImportSpecifiers(source) {
   return [...specs].filter((spec) => spec.startsWith('.'));
 }
 
-// Resolves the relative-import closure of `entry` within a git ref and returns
-// the repo-relative paths (forward-slash, Windows-safe) the re-exec stage must
-// check out. Only files actually present in the ref are returned; the known
-// fallback files are appended defensively. This generalizes the previously
-// hardcoded checkout list so a future new top-level import can't reintroduce
-// the self-reexec ERR_MODULE_NOT_FOUND crash (issue #1245).
-function resolveReexecCheckout(ref, entry) {
+// Resolves the relative-import closure of `entry` and the known fallback files
+// within a git ref and returns the repo-relative paths (forward-slash,
+// Windows-safe) the re-exec stage must check out. Only files actually present
+// in the ref are returned. The fallback files are walked like `entry`, not just
+// appended: they are loaded by dynamic import before the normal checkout, so
+// their own static imports must be on disk too (a new import in
+// cv-templates.mjs crashed the re-exec otherwise). This generalizes the
+// previously hardcoded checkout list so a future new top-level import can't
+// reintroduce the self-reexec ERR_MODULE_NOT_FOUND crash (issue #1245).
+export function resolveReexecCheckout(ref, entry, root = ROOT) {
   const visited = new Set();
-  const present = new Set();
   const order = [];
-  const stack = [entry];
+  const stack = [...REEXEC_FALLBACK_FILES].reverse().concat(entry);
   while (stack.length) {
     const file = stack.pop();
     if (visited.has(file)) continue;
     visited.add(file);
     let source;
     try {
-      source = git('show', `${ref}:${file}`);
+      source = gitIn(root, 'show', `${ref}:${file}`);
     } catch {
       continue; // absent in this ref — leave it to the normal update stage
     }
-    present.add(file);
     order.push(file);
     const dir = pathPosix.dirname(file);
     for (const spec of relativeImportSpecifiers(source)) {
       stack.push(pathPosix.join(dir, spec));
-    }
-  }
-  for (const file of REEXEC_FALLBACK_FILES) {
-    if (present.has(file)) continue;
-    try {
-      git('show', `${ref}:${file}`);
-      order.push(file);
-      present.add(file);
-    } catch {
-      // Not in the target tree (older version) — nothing to check out.
     }
   }
   return order;
