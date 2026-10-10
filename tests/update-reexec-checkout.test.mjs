@@ -10,12 +10,17 @@
  * (#3852), the re-exec checked out the new cv-templates.mjs without the new
  * module, and the target updater crashed with ERR_MODULE_NOT_FOUND on
  * `await import('./cv-templates.mjs')` in loadConfiguredTemplateVariants().
+ *
+ * An updater released before that fix still builds the short list, and it is
+ * the CLIENT's resolver that runs, so the target updater must also survive a
+ * cv-templates.mjs whose local imports are missing (section 3).
  */
 
 import { execFileSync } from 'child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
+import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
+import { pathToFileURL } from 'url';
 import { pass, fail, rmSync, ROOT } from './helpers.mjs';
 import { resolveReexecCheckout, REEXEC_FALLBACK_FILES } from '../update-system.mjs';
 
@@ -92,5 +97,32 @@ function gitIn(root, ...args) {
     pass(`re-exec checkout covers every static import of cv-templates.mjs (${imported.length})`);
   } else {
     fail(`re-exec checkout omits cv-templates.mjs imports: ${JSON.stringify(missing)}`);
+  }
+}
+
+// ── 3. The target updater survives an old client's short checkout ──
+{
+  const root = mkdtempSync(join(tmpdir(), 'reexec-target-'));
+  try {
+    copyFileSync(join(ROOT, 'update-system.mjs'), join(root, 'update-system.mjs'));
+    writeFileSync(join(root, 'cv-templates.mjs'),
+      "import { parseMeta } from './lib/not-checked-out-yet.mjs';\nexport { parseMeta };\n");
+    const profilePath = join(root, 'profile.yml');
+    writeFileSync(profilePath, 'cv:\n  template: bw\ncover_letter:\n  template: concise\n');
+
+    const target = await import(pathToFileURL(join(root, 'update-system.mjs')).href);
+    let configured;
+    try {
+      configured = await target.loadConfiguredTemplateVariants({ profilePath });
+    } catch (err) {
+      configured = err;
+    }
+    if (configured?.cv === 'bw' && configured?.cover === 'concise') {
+      pass('target updater reads configured variants when a cv-templates.mjs import is missing');
+    } else {
+      fail(`target updater did not fall back past a missing cv-templates.mjs import: ${configured?.message || JSON.stringify(configured)}`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 }

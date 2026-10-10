@@ -1691,8 +1691,14 @@ export async function loadConfiguredTemplateVariants({ profilePath } = {}) {
       // no-exemption behavior only for that exact compatibility case.
       return configuredVariants;
     }
-    if (err?.code === 'ERR_MODULE_NOT_FOUND'
-        && /Cannot find package ['"]js-yaml['"]/.test(err?.message || '')) {
+    // A local module cv-templates.mjs imports can be missing too: an updater
+    // older than the fallback-closure walk checks out the new cv-templates.mjs
+    // without the files it newly imports. The normal checkout supplies them,
+    // so read the profile without cv-templates.mjs for this pass.
+    const missingLocalModule = err?.code === 'ERR_MODULE_NOT_FOUND'
+      && String(err?.url || '').startsWith('file:');
+    if (missingLocalModule || (err?.code === 'ERR_MODULE_NOT_FOUND'
+        && /Cannot find package ['"]js-yaml['"]/.test(err?.message || ''))) {
       if (!profilePath || !existsSync(profilePath)) return configuredVariants;
       return configuredTemplateVariantsFromProfileSource(readFileSync(profilePath, 'utf8'));
     }
